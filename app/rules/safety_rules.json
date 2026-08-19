@@ -1,0 +1,82 @@
+[
+  {
+    "rule_id": "RF001",
+    "name": "Chest Pain or Pressure",
+    "field": "chest_pain",
+    "trigger_value": true,
+    "severity": "CRITICAL",
+    "message": "Patient reports chest pain or pressure — immediate emergency screening required."
+  },
+  {
+    "rule_id": "RF002",
+    "name": "Severe Difficulty Breathing",
+    "field": "difficulty_breathing",
+    "trigger_value": true,
+    "severity": "CRITICAL",
+    "message": "Patient reports severe difficulty breathing — cannot speak in full sentences or is gasping for air."
+  },
+  {
+    "rule_id": "RF003",
+    "name": "Altered or Loss of Consciousness",
+    "field": "altered_consciousness",
+    "trigger_value": true,
+    "severity": "CRITICAL",
+    "message": "Patient reports loss of consciousness, fainting, or acute confusion."
+  },
+  {
+    "rule_id": "RF004",
+    "name": "Severe Uncontrolled Bleeding",
+    "field": "severe_bleeding",
+    "trigger_value": true,
+    "severity": "CRITICAL",
+    "message": "Patient reports severe uncontrolled bleeding that won't stop despite direct pressure."
+  },
+  {
+    "rule_id": "RF005",
+    "name": "Active Stroke Symptoms",
+    "field": "stroke_symptoms",
+    "trigger_value": true,
+    "severity": "CRITICAL",
+    "message": "Patient reports active stroke symptoms (FAST: facial drooping, arm weakness, speech difficulty)."
+  },
+  {
+    "rule_id": "RF006",
+    "name": "Suicidal Ideation or Intent",
+    "field": "suicidal_ideation",
+    "trigger_value": true,
+    "severity": "CRITICAL",
+    "message": "Patient reports suicidal ideation or intent to self-harm."
+  },
+  {
+    "rule_id": "RF007",
+    "name": "Anaphylaxis",
+    "field": "anaphylaxis",
+    "trigger_value": true,
+    "severity": "CRITICAL",
+    "message": "Patient reports anaphylaxis — severe systemic allergic reaction with throat swelling or systemic collapse."
+  },
+  {
+    "rule_id": "RF008",
+    "name": "Dangerously High Fever",
+    "field": "high_fever",
+    "trigger_value": true,
+    "severity": "HIGH",
+    "message": "Patient reports a dangerously high fever (≥103°F / 39.4°C)."
+  },
+  {
+    "rule_id": "RF009",
+    "name": "Unable to Walk or Bear Weight",
+    "field": "unable_to_walk",
+    "trigger_value": true,
+    "severity": "HIGH",
+    "message": "Patient reports complete inability to walk, stand, or bear weight."
+  },
+  {
+    "rule_id": "RF010",
+    "name": "Severe Acute Abdominal Pain",
+    "field": "severe_abdominal_pain",
+    "trigger_value": true,
+    "severity": "HIGH",
+    "message": "Patient reports severe acute abdominal pain — sharp, stabbing, or crushing."
+  }
+]
