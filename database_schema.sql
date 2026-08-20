@@ -172,3 +172,14 @@ COMMENT ON COLUMN patient_ehr.bmi IS 'Body Mass Index - required for ML Model 1 
 COMMENT ON COLUMN patient_ehr.charlson_comorbidity_index IS 'Charlson Comorbidity Index (0-37)';
 COMMENT ON COLUMN patient_ehr.clinical_notes IS 'Free-text clinical notes, observations, discharge summaries';
 COMMENT ON COLUMN patient_ehr.is_active IS 'Soft delete flag: 1=active, 0=inactive/deleted';
+
+-- ============================================
+-- CHAT HISTORY FEATURE
+-- ============================================
+-- NOTE: Chat tables are defined in migrations/create_chat_tables.sql
+-- Run that migration to add chat functionality:
+--   psql -U vishwa -d carepath_db -f migrations/create_chat_tables.sql
+--
+-- Tables included:
+--   - chat_sessions: Chat conversation metadata (ChatGPT-style history)
+--   - chat_messages: Individual messages stored as JSONB for flexibility
