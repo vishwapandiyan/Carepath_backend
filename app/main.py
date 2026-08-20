@@ -11,6 +11,9 @@ from app.config import settings
 from app.db.base import Base, engine
 from app.patient import patient_router
 
+# Import all models to ensure they are registered with SQLAlchemy
+from app.models import User, PatientEHR, MLPrediction
+
 logging.basicConfig(
     level=logging.DEBUG if settings.app_env == "development" else logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",

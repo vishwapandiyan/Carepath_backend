@@ -1,9 +1,11 @@
 """
 EHR CRUD Service
 Handles business logic for patient EHR records using AsyncSession.
+Auto-triggers ML predictions (readmission) when patient EHR is created.
 """
 import random
 import string
+import logging
 from datetime import datetime
 from typing import List, Optional
 
@@ -12,6 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ehr import PatientEHR
 from app.schemas.ehr import PatientEHRCreate, PatientEHRUpdate
+from app.schemas.ml_predictions import MLPredictionCreate
+from app.services.readmission_prediction_service import readmission_prediction_service
+from app.services.ml_predictions_service import ml_predictions_service
+
+logger = logging.getLogger(__name__)
 
 
 class EHRCRUDService:
@@ -138,7 +145,46 @@ class EHRCRUDService:
         db.add(patient_ehr)
         await db.commit()
         await db.refresh(patient_ehr)
+        
+        # Auto-trigger readmission prediction after patient creation
+        await EHRCRUDService._auto_trigger_readmission_prediction(db, patient_ehr)
+        
         return patient_ehr
+    
+    @staticmethod
+    async def _auto_trigger_readmission_prediction(db: AsyncSession, patient_ehr: PatientEHR) -> None:
+        """
+        Automatically trigger readmission prediction after patient EHR is created.
+        Stores the prediction in ml_predictions table.
+        """
+        try:
+            logger.info(f"Auto-triggering readmission prediction for patient {patient_ehr.patient_id}")
+            
+            # Make readmission prediction
+            prediction_result = readmission_prediction_service.predict(patient_ehr)
+            
+            # Store prediction in database
+            prediction_data = MLPredictionCreate(
+                patient_id=patient_ehr.patient_id,
+                mrn=patient_ehr.mrn,
+                model_type=prediction_result["model_type"],
+                model_version=prediction_result["model_version"],
+                risk_score=prediction_result["risk_score"],
+                prediction_result=prediction_result["prediction_details"],
+                created_by="system_auto"  # Automatic prediction
+            )
+            
+            await ml_predictions_service.create_prediction(db, prediction_data)
+            
+            logger.info(
+                f"✓ Readmission prediction stored for patient {patient_ehr.patient_id}: "
+                f"risk_score={prediction_result['risk_score']:.4f}"
+            )
+            
+        except Exception as e:
+            # Log error but don't fail patient creation
+            logger.error(f"Failed to auto-trigger readmission prediction for patient {patient_ehr.patient_id}: {str(e)}")
+            logger.error("Patient creation succeeded, but prediction failed")
     
     @staticmethod
     async def get_patient_by_patient_id(db: AsyncSession, patient_id: str) -> Optional[PatientEHR]:

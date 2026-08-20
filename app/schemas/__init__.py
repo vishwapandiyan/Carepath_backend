@@ -13,16 +13,69 @@ from app.schemas.ehr import (
     PatientEHRResponse,
     PatientEHRListResponse
 )
+from app.schemas.chat import (
+    # Request schemas
+    ChatCreateRequest,
+    MessageSendRequest,
+    TitleUpdateRequest,
+    PinUpdateRequest,
+    # Response schemas
+    ChatSessionResponse,
+    MessageResponse,
+    ChatDetailResponse,
+    MessageSendResponse,
+    ChatListResponse,
+    ChatSearchResponse,
+    ChatSearchResult,
+    ChatDeleteResponse,
+    TitleUpdateResponse,
+    ExportResponse,
+    # Enums
+    MessageRole,
+    ExportFormat,
+    SortOrder,
+    # Supporting schemas
+    MessageMetadata,
+    MessageAttachment,
+    MessageContext,
+)
 
 __all__ = [
+    # Auth
     "LoginRequest",
     "Token",
     "CareManagerSignupRequest",
     "PatientSignupRequest",
+    # User
     "UserResponse",
     "PatientResponse",
+    # EHR
     "PatientEHRCreate",
     "PatientEHRUpdate",
     "PatientEHRResponse",
-    "PatientEHRListResponse"
+    "PatientEHRListResponse",
+    # Chat - Requests
+    "ChatCreateRequest",
+    "MessageSendRequest",
+    "TitleUpdateRequest",
+    "PinUpdateRequest",
+    # Chat - Responses
+    "ChatSessionResponse",
+    "MessageResponse",
+    "ChatDetailResponse",
+    "MessageSendResponse",
+    "ChatListResponse",
+    "ChatSearchResponse",
+    "ChatSearchResult",
+    "ChatDeleteResponse",
+    "TitleUpdateResponse",
+    "ExportResponse",
+    # Chat - Enums
+    "MessageRole",
+    "ExportFormat",
+    "SortOrder",
+    # Chat - Supporting
+    "MessageMetadata",
+    "MessageAttachment",
+    "MessageContext",
 ]

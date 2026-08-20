@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel, Field
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 import logging
 
 from app.core.security import get_current_patient
@@ -11,6 +11,14 @@ from app.models import User
 from app.models.ehr import PatientEHR
 from app.services.ed_feature_mapper import ed_feature_mapper
 from app.services.ed_prediction_service import ed_prediction_service
+from app.services.readmission_prediction_service import readmission_prediction_service
+from app.services.ml_predictions_service import ml_predictions_service
+from app.schemas.ml_predictions import (
+    MLPredictionCreate,
+    MLPredictionResponse,
+    ReadmissionPredictionResponse
+)
+from app.services.ehr_crud_service import ehr_crud_service
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +151,33 @@ async def predict_ed_avoidable(
             f"(probability={result['probability']:.3f}, confidence={result['confidence']})"
         )
         
+        # Store prediction in ml_predictions table if EHR data is available
+        if ehr_data:
+            try:
+                prediction_data = MLPredictionCreate(
+                    patient_id=ehr_data.patient_id,
+                    mrn=ehr_data.mrn,
+                    model_type="ed_avoidable",
+                    model_version="1.0",
+                    risk_score=result['probability'],
+                    prediction_result={
+                        "avoidable_ed": result['avoidable_ed'],
+                        "confidence": result['confidence'],
+                        "recommendation": result['recommendation'],
+                        "features_used": len(features),
+                        "intake_data": request.intake_data,
+                        "safety_flags": request.safety_flags
+                    },
+                    created_by="chatbot_flow"
+                )
+                
+                await ml_predictions_service.create_prediction(db, prediction_data)
+                logger.info(f"✓ ED prediction stored for patient {ehr_data.patient_id}")
+                
+            except Exception as e:
+                # Log error but don't fail the prediction response
+                logger.error(f"Failed to store ED prediction: {str(e)}")
+        
         return EDPredictionResponse(
             success=True,
             avoidable_ed=result['avoidable_ed'],
@@ -184,3 +219,197 @@ async def get_patient_dashboard(
             "mrn": getattr(current_user, "patient", None).mrn if getattr(current_user, "patient", None) else None,
         },
     }
+
+
+# === Readmission Prediction Endpoints ===
+
+@router.post("/{patient_id}/readmission-prediction", response_model=ReadmissionPredictionResponse)
+async def predict_readmission_risk(
+    patient_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Manual trigger for readmission risk prediction.
+    
+    **Purpose:** Predict 30-day hospital readmission risk based on patient EHR data.
+    
+    **Usage:**
+    - Triggered manually from patient profile when user clicks "Predict"
+    - Uses latest patient EHR data
+    - Returns risk score (0.0 to 1.0)
+    
+    **Parameters:**
+    - patient_id: Patient ID (PAT_XXXXXXXX format)
+    
+    **Returns:**
+    - readmission_risk_score: Probability of 30-day readmission (0.0 to 1.0)
+    - predicted_at: Timestamp of prediction
+    - model_version: Version of ML model used
+    - prediction_details: Additional details (age, comorbidities, etc.)
+    """
+    
+    logger.info(f"Manual readmission prediction request for patient: {patient_id}")
+    
+    try:
+        # Fetch patient EHR data
+        ehr = await ehr_crud_service.get_patient_by_patient_id(db, patient_id)
+        
+        if not ehr:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Patient with ID {patient_id} not found"
+            )
+        
+        # Make readmission prediction
+        prediction_result = readmission_prediction_service.predict(ehr)
+        
+        # Store prediction in database
+        prediction_data = MLPredictionCreate(
+            patient_id=ehr.patient_id,
+            mrn=ehr.mrn,
+            model_type=prediction_result["model_type"],
+            model_version=prediction_result["model_version"],
+            risk_score=prediction_result["risk_score"],
+            prediction_result=prediction_result["prediction_details"],
+            created_by="manual_trigger"  # Manual prediction
+        )
+        
+        stored_prediction = await ml_predictions_service.create_prediction(db, prediction_data)
+        
+        logger.info(
+            f"✓ Readmission prediction completed for patient {patient_id}: "
+            f"risk_score={prediction_result['risk_score']:.4f}"
+        )
+        
+        return ReadmissionPredictionResponse(
+            readmission_risk_score=prediction_result["risk_score"],
+            predicted_at=stored_prediction.predicted_at,
+            model_version=prediction_result["model_version"],
+            prediction_details=prediction_result["prediction_details"]
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Readmission prediction failed for patient {patient_id}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Readmission prediction failed: {str(e)}"
+        )
+
+
+@router.get("/{patient_id}/ml-predictions", response_model=List[MLPredictionResponse])
+async def get_ml_predictions_history(
+    patient_id: str,
+    model_type: Optional[str] = None,
+    limit: int = 10,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get ML prediction history for a patient.
+    
+    **Purpose:** Retrieve historical predictions for a patient across all ML models.
+    
+    **Parameters:**
+    - patient_id: Patient ID (PAT_XXXXXXXX format)
+    - model_type: Optional filter by model type (readmission, ed_avoidable, etc.)
+    - limit: Maximum number of records to return (default: 10)
+    
+    **Returns:**
+    - List of ML predictions with risk scores and timestamps
+    """
+    
+    logger.info(f"Fetching ML predictions for patient: {patient_id}, model_type: {model_type}")
+    
+    try:
+        # Verify patient exists
+        ehr = await ehr_crud_service.get_patient_by_patient_id(db, patient_id)
+        
+        if not ehr:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Patient with ID {patient_id} not found"
+            )
+        
+        # Get prediction history
+        predictions = await ml_predictions_service.get_prediction_history(
+            db,
+            patient_id=patient_id,
+            model_type=model_type,
+            limit=limit
+        )
+        
+        logger.info(f"Retrieved {len(predictions)} predictions for patient {patient_id}")
+        
+        return predictions
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to retrieve predictions for patient {patient_id}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve predictions: {str(e)}"
+        )
+
+
+@router.get("/{patient_id}/latest-predictions")
+async def get_latest_predictions_by_model(
+    patient_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get the latest prediction for each model type for a patient.
+    
+    **Purpose:** Show current risk scores across all ML models on patient profile.
+    
+    **Parameters:**
+    - patient_id: Patient ID (PAT_XXXXXXXX format)
+    
+    **Returns:**
+    - Dict mapping model_type -> latest prediction
+    - Example: {"readmission": {...}, "ed_avoidable": {...}}
+    """
+    
+    logger.info(f"Fetching latest predictions for patient: {patient_id}")
+    
+    try:
+        # Verify patient exists
+        ehr = await ehr_crud_service.get_patient_by_patient_id(db, patient_id)
+        
+        if not ehr:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Patient with ID {patient_id} not found"
+            )
+        
+        # Get latest predictions for all model types
+        predictions_by_model = await ml_predictions_service.get_all_predictions_for_patient(
+            db,
+            patient_id=patient_id
+        )
+        
+        # Convert to response format
+        response = {}
+        for model_type, prediction in predictions_by_model.items():
+            response[model_type] = {
+                "id": prediction.id,
+                "risk_score": prediction.risk_score,
+                "model_version": prediction.model_version,
+                "predicted_at": prediction.predicted_at,
+                "prediction_result": prediction.prediction_result
+            }
+        
+        logger.info(f"Retrieved latest predictions for {len(response)} models for patient {patient_id}")
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to retrieve latest predictions for patient {patient_id}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve latest predictions: {str(e)}"
+        )
+
