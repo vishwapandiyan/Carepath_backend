@@ -35,13 +35,13 @@ def _mock_extraction(overrides: dict = None) -> dict:
         "symptom_onset": None,
         "pain_scale": None,
         "location": None,
-        "duration": None,
+        "pain_duration": None,
+        "pain_character": None,
+        "pain_radiating": None,
+        "symptom_trend": None,
+        "user_query_answer": None,
         "medications": [],
         "allergies": [],
-        "prior_conditions": [],
-        "relevant_history": None,
-        "worsening_factors": None,
-        "relieving_factors": None,
     }
     if overrides:
         base.update(overrides)
@@ -136,6 +136,10 @@ def test_send_message_complete_when_all_required_fields_present():
         "symptom_onset": "2 hours ago",
         "pain_scale": 8,
         "location": "left chest",
+        "pain_duration": "2 hours",
+        "pain_character": "sharp",
+        "pain_radiating": "no",
+        "symptom_trend": "stable",
         "medications": ["aspirin"],
         "allergies": ["penicillin"],
     })

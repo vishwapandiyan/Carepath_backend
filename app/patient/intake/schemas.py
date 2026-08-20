@@ -13,6 +13,10 @@ class LLMExtraction(BaseModel):
     symptom_onset: str | None = None          # replaces duration — onset is clinically more relevant
     pain_scale: int | None = Field(None, ge=0, le=10)
     location: str | None = None
+    pain_duration: str | None = None
+    pain_character: str | None = None
+    pain_radiating: str | None = None
+    symptom_trend: str | None = None
     user_query_answer: str | None = None
 
 
