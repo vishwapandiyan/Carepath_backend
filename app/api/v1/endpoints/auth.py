@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,7 @@ from app.schemas import (
     UserResponse,
 )
 from app.services.ehr_service import ehr_service
+from app.services.ehr_crud_service import ehr_crud_service
 
 router = APIRouter()
 
@@ -115,11 +116,29 @@ async def signup_patient(
     else:
         patient_data = await ehr_service.get_patient_data(db, mrn)
         patient_name = f"{patient_data.get('first_name', '')} {patient_data.get('last_name', '')}".strip() or "Patient"
-        patient = Patient(
+        patient_id_gen = await ehr_crud_service.generate_patient_id(db)
+        dob_val = patient_data.get("date_of_birth")
+        if not dob_val or isinstance(dob_val, str):
+            try:
+                dob_val = datetime.strptime(str(dob_val), "%Y-%m-%d").date() if dob_val else date(1990, 1, 1)
+            except Exception:
+                dob_val = date(1990, 1, 1)
+
+        patient = PatientEHR(
+            patient_id=patient_id_gen,
             mrn=mrn,
             name=patient_name,
-            full_name=patient_name,
-            dob=patient_data.get("date_of_birth")
+            date_of_birth=dob_val,
+            age=30,
+            gender="other",
+            bmi=24.0,
+            insurance_type="Private",
+            hemoglobin=14.0,
+            creatinine=0.9,
+            glucose=95,
+            wbc_count=7.5,
+            previous_admissions_12m=0,
+            previous_er_visits_12m=0
         )
         db.add(patient)
         await db.commit()

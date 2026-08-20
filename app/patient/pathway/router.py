@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
 
 from app.core.security import get_current_patient
-from .schemas import PathwayResponse
+from .schemas import PathwayRequest, PathwayResponse
 from .service import run_pathway
 
 router = APIRouter(
@@ -12,14 +13,19 @@ router = APIRouter(
 
 
 @router.post("/", response_model=PathwayResponse)
-def trigger_pathway(patient_id: str):
+def trigger_pathway(
+    patient_id: str,
+    payload: Optional[PathwayRequest] = None,
+):
     """
-    Runs the pathway agent (CMS claims -> feature engineering -> ML risk score)
-    and returns whether the patient is NOT_AVOIDABLE (-> ER) or
-    POTENTIALLY_AVOIDABLE (-> continues to Care Options).
-    Only accessible by authenticated Patients.
+    Runs the Clinical Emergency Risk Model & CarePlan Agent.
+    Evaluates Extracted Intake Data + Red Flag Screening + Patient EHR record.
+    Returns calculated Emergency Risk Score, Decision, and CarePlan Options.
     """
     try:
-        return run_pathway(patient_id)
-    except NotImplementedError as e:
-        raise HTTPException(status_code=501, detail=str(e))
+        req = payload or PathwayRequest(patient_id=patient_id)
+        if not req.patient_id:
+            req.patient_id = patient_id
+        return run_pathway(patient_id, request=req)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

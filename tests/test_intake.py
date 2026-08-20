@@ -10,10 +10,13 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.config import settings
+from app.core.security import get_current_patient
+from app.db.models import User, UserRole
 
-# Use a fixed test API key
-TEST_KEY = settings.api_key
-HEADERS = {"X-API-Key": TEST_KEY}
+mock_user = User(username="test_patient", role=UserRole.PATIENT, patient_id="PAT-TEST-001")
+app.dependency_overrides[get_current_patient] = lambda: mock_user
+
+HEADERS = {}
 
 client = TestClient(app)
 
@@ -55,9 +58,11 @@ def test_create_session_returns_session_id_and_first_question():
     assert data["next_question"] is not None   # chief_complaint question
 
 
-def test_create_session_requires_api_key():
+def test_create_session_requires_auth():
+    app.dependency_overrides.pop(get_current_patient, None)
     r = client.post("/api/v1/intake/sessions", json={"patient_id": "p-1"})
-    assert r.status_code == 403
+    assert r.status_code == 401
+    app.dependency_overrides[get_current_patient] = lambda: mock_user
 
 
 def test_get_session_returns_current_state():

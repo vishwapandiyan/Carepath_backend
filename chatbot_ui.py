@@ -17,9 +17,10 @@ import requests
 import streamlit as st
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 # Config
 # ─────────────────────────────────────────────────────────────────────────────
-BASE_URL = "http://127.0.0.1:8000/api/v1/patient"
+BASE_URL = "http://127.0.0.1:8000/api/v1"
 DEFAULT_API_KEY = "5e16700718fb2954a5378108763c96342f44d86dab0f17d1df62f861c79e8676"
 
 st.set_page_config(
@@ -29,19 +30,44 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Sidebar — connection settings
+# Sidebar — connection settings & Auth
 # ─────────────────────────────────────────────────────────────────────────────
+if "jwt_token" not in st.session_state:
+    st.session_state.jwt_token = ""
+
 with st.sidebar:
     st.title("⚙️ Settings")
-    api_key = st.text_input("API Key", value=DEFAULT_API_KEY, type="password")
     base_url = st.text_input("Backend URL", value=BASE_URL)
+    jwt_token = st.text_input("JWT Access Token (Bearer)", value=st.session_state.jwt_token, type="password")
+    st.session_state.jwt_token = jwt_token
+
+    with st.expander("🔑 Patient Login", expanded=not bool(jwt_token)):
+        login_user = st.text_input("Username", key="login_user")
+        login_pass = st.text_input("Password", type="password", key="login_pass")
+        if st.button("Log In", use_container_width=True):
+            try:
+                r = requests.post(f"{base_url}/auth/login", json={"username": login_user, "password": login_pass})
+                if r.status_code == 200:
+                    tok = r.json().get("access_token")
+                    st.session_state.jwt_token = tok
+                    st.success("Logged in successfully!")
+                    st.rerun()
+                else:
+                    st.error(f"Login failed: {r.text}")
+            except Exception as e:
+                st.error(f"Connection error: {e}")
+
     st.divider()
     if st.button("🔄 Reset Session", use_container_width=True):
         st.session_state.clear()
         st.rerun()
     st.caption("Make sure `uvicorn app.main:app --reload` is running.")
 
-HEADERS = {"X-API-Key": api_key, "Content-Type": "application/json"}
+def get_headers():
+    h = {"Content-Type": "application/json"}
+    if st.session_state.jwt_token:
+        h["Authorization"] = f"Bearer {st.session_state.jwt_token}"
+    return h
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -57,6 +83,7 @@ def _init():
         "intake_features": None,
         "red_flags": {},           # accumulated checklist values
         "safety_result": None,
+        "pathway_result": None,
     }
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
@@ -69,7 +96,7 @@ _init()
 # ─────────────────────────────────────────────────────────────────────────────
 def api_post(path: str, body: dict) -> dict | None:
     try:
-        r = requests.post(f"{base_url}{path}", json=body, headers=HEADERS, timeout=30)
+        r = requests.post(f"{base_url}{path}", json=body, headers=get_headers(), timeout=30)
         r.raise_for_status()
         return r.json()
     except requests.HTTPError as e:
@@ -81,7 +108,7 @@ def api_post(path: str, body: dict) -> dict | None:
 
 def api_get(path: str) -> dict | None:
     try:
-        r = requests.get(f"{base_url}{path}", headers=HEADERS, timeout=30)
+        r = requests.get(f"{base_url}{path}", headers=get_headers(), timeout=30)
         r.raise_for_status()
         return r.json()
     except requests.HTTPError as e:
@@ -121,6 +148,13 @@ def send_intake_message(user_text: str):
 
     st.session_state.intake_features = data.get("extracted")
 
+    # If we are already in verdict phase, do NOT reset phase to safety!
+    if st.session_state.phase == "verdict":
+        next_q = data.get("next_question", "")
+        if next_q:
+            add_message("assistant", next_q)
+        return
+
     if data.get("status") == "COMPLETE":
         st.session_state.phase = "safety"
         add_message(
@@ -152,6 +186,36 @@ def submit_red_flags_and_evaluate():
 
     st.session_state.safety_result = result
     st.session_state.phase = "verdict"
+
+
+def trigger_pathway_scoring():
+    pid = st.session_state.patient_id or "PAT-001"
+    intake = st.session_state.intake_features or {}
+    flags = st.session_state.red_flags or {}
+
+    payload = {
+        "patient_id": pid,
+        "chief_complaint": intake.get("chief_complaint"),
+        "symptom_onset": intake.get("symptom_onset"),
+        "pain_scale": intake.get("pain_scale"),
+        "location": intake.get("location"),
+        "red_flag_answers": flags,
+    }
+
+    res = api_post(f"/patients/{pid}/pathway/", payload)
+    if res:
+        st.session_state.pathway_result = res
+        score = res.get("risk_score", 0.0)
+        level = res.get("risk_level", "LOW")
+        decision = res.get("decision", "POTENTIALLY_AVOIDABLE")
+        explanation = res.get("explanation", "")
+
+        msg_body = (
+            f"📊 **Emergency & Readmission Risk Score**: `{score}%` ({level})\n\n"
+            f"**Decision**: `{decision}`\n\n"
+            f"**Clinical Explanation**: {explanation}"
+        )
+        add_message("assistant", msg_body)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -268,7 +332,7 @@ elif st.session_state.phase == "safety":
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# UI — PHASE: VERDICT
+# UI — PHASE: VERDICT & CONTINUOUS CHAT
 # ─────────────────────────────────────────────────────────────────────────────
 elif st.session_state.phase == "verdict":
     result = st.session_state.safety_result or {}
@@ -276,52 +340,82 @@ elif st.session_state.phase == "verdict":
     next_action = result.get("next_action", "ERROR")
     triggered = result.get("triggered_rules", [])
 
-    st.progress(1.0, text="Step 3 of 3 — Complete")
+    st.progress(1.0, text="Step 3 of 3 — Screening Complete")
 
     if outcome == "YES":
         st.markdown(
             """
-            <div style="background:#FF4444;border-radius:16px;padding:32px;text-align:center;color:white;">
-                <h1 style="margin:0;font-size:3rem;">🚨 EMERGENCY</h1>
-                <p style="font-size:1.4rem;margin-top:8px;">Please go to the Emergency Room immediately.</p>
-                <p style="font-size:1rem;opacity:0.85;">Do not wait. Call 911 if you cannot travel safely.</p>
+            <div style="background:#FF4444;border-radius:16px;padding:24px;text-align:center;color:white;margin-bottom:16px;">
+                <h2 style="margin:0;font-size:2.2rem;">🚨 EMERGENCY DETECTED</h2>
+                <p style="font-size:1.2rem;margin-top:6px;">Please go to the Emergency Room immediately.</p>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        st.divider()
-        if triggered:
-            st.subheader("⚠️ Triggered Red Flags")
-            for rule_id in triggered:
-                st.error(f"Rule **{rule_id}** was triggered")
-
     elif outcome == "NO":
         st.markdown(
             """
-            <div style="background:#1a7a4a;border-radius:16px;padding:32px;text-align:center;color:white;">
-                <h1 style="margin:0;font-size:3rem;">✅ No Emergency Detected</h1>
-                <p style="font-size:1.4rem;margin-top:8px;">Routing to clinical assessment pathway.</p>
-                <p style="font-size:1rem;opacity:0.85;">Next: ML-based clinical decision support (CMS/ML Pathway)</p>
+            <div style="background:#1a7a4a;border-radius:16px;padding:24px;text-align:center;color:white;margin-bottom:16px;">
+                <h2 style="margin:0;font-size:2.2rem;">✅ No Emergency Detected</h2>
+                <p style="font-size:1.1rem;margin-top:6px;">Routing to ML-based clinical assessment pathway.</p>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-    else:  # ERROR
-        st.error(f"⚠️ Safety engine error: {result.get('error_detail', 'Unknown')}")
-        st.info("Please retry or contact support.")
+    # ── Interactive Pop-Up Card: Emergency Score & Care Plan Prompt ─────────
+    pathway_res = getattr(st.session_state, "pathway_result", None)
+    if not pathway_res:
+        st.info("💡 **Can I check your Emergency Risk Score & Care Plan?**\n\nOur ML model will analyze your MRN record, extracted symptoms, and red-flag screening answers.")
+        col_mrn, col_btn = st.columns([2, 1])
+        with col_mrn:
+            mrn_val = st.text_input("Patient MRN / ID", value=st.session_state.patient_id or "PAT-001", key="input_mrn")
+        with col_btn:
+            st.write("")
+            st.write("")
+            if st.button("📊 Calculate Risk Score", type="primary", use_container_width=True):
+                st.session_state.patient_id = mrn_val
+                with st.spinner("Analyzing EHR + Symptoms via ML Risk Model..."):
+                    trigger_pathway_scoring()
+                st.rerun()
+
+    # ── Render Pathway & Care Plan Result Card (if triggered) ────────────────
+    pathway = getattr(st.session_state, "pathway_result", None)
+    if pathway:
+        score = pathway.get("risk_score", 0.0)
+        level = pathway.get("risk_level", "LOW")
+        decision = pathway.get("decision", "")
+        care_plans = pathway.get("care_plan", [])
+
+        st.subheader("📊 Emergency & Readmission Risk Assessment")
+        mcol1, mcol2, mcol3 = st.columns(3)
+        mcol1.metric("Risk Score", f"{score}%")
+        mcol2.metric("Risk Level", level)
+        mcol3.metric("Decision Verdict", decision)
+
+        st.progress(score / 100.0, text=f"Calculated Clinical Risk: {score}%")
+        st.markdown(f"**Clinical Explanation**: {pathway.get('explanation', '')}")
+
+        if care_plans:
+            st.subheader("🏥 CarePlan Agent Recommendations")
+            for plan in care_plans:
+                with st.container():
+                    st.markdown(f"#### 🔹 {plan.get('title')} (`{plan.get('urgency')}`)")
+                    st.write(plan.get('description'))
+                    st.success(f"👉 **Action**: {plan.get('recommended_action')}")
+                    st.divider()
 
     st.divider()
 
-    # Summary card
-    with st.expander("📊 Full Session Summary", expanded=True):
+    # Summary expander
+    with st.expander("📋 Session & Screening Summary", expanded=False):
         col1, col2, col3 = st.columns(3)
-        col1.metric("Result", outcome)
+        col1.metric("Safety Result", outcome)
         col2.metric("Next Action", next_action)
         col3.metric("Rules Triggered", len(triggered))
 
         if st.session_state.intake_features:
-            st.subheader("Intake Data")
+            st.subheader("Extracted Intake Data")
             f = st.session_state.intake_features
             st.table({
                 "Field": ["Chief Complaint", "Onset", "Pain Scale", "Location"],
@@ -333,32 +427,21 @@ elif st.session_state.phase == "verdict":
                 ],
             })
 
-        st.subheader("Red Flag Answers")
-        flag_data = {"Symptom": [], "Answer": []}
-        labels = {
-            "chest_pain": "Chest Pain/Pressure",
-            "difficulty_breathing": "Severe Difficulty Breathing",
-            "altered_consciousness": "Loss of Consciousness",
-            "severe_bleeding": "Severe Bleeding",
-            "stroke_symptoms": "Stroke Symptoms",
-            "suicidal_ideation": "Suicidal Ideation",
-            "anaphylaxis": "Anaphylaxis",
-            "high_fever": "High Fever ≥103°F",
-            "unable_to_walk": "Unable to Walk",
-            "severe_abdominal_pain": "Severe Abdominal Pain",
-        }
-        for field, label in labels.items():
-            flag_data["Symptom"].append(label)
-            val = st.session_state.red_flags.get(field, False)
-            flag_data["Answer"].append("🔴 YES" if val else "🟢 No")
-        st.table(flag_data)
+    # ── Continuous Chat Window (Gemini style) ───────────────────────────────
+    st.subheader("💬 Continuous Assistant Chat")
+    st.caption("Ask any medical question or follow-up — Gemini AI is active.")
 
-        st.caption(
-            f"Session ID: `{st.session_state.session_id}` | "
-            f"Evaluated at: `{result.get('evaluated_at', '—')}`"
-        )
+    for msg in st.session_state.chat_messages:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+
+    # Chat input remains active continuously
+    chat_val = st.chat_input("Ask a follow-up question or type any message…")
+    if chat_val:
+        send_intake_message(chat_val)
+        st.rerun()
 
     st.divider()
-    if st.button("🔄 Start New Triage", type="primary", use_container_width=True):
+    if st.button("🔄 Start New Triage Session", type="primary", use_container_width=True):
         st.session_state.clear()
         st.rerun()

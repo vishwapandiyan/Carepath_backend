@@ -13,9 +13,10 @@ class Settings(BaseSettings):
     # Database (PostgreSQL async)
     database_url: str = "postgresql+asyncpg://postgres:admin123@localhost:5432/readmission_db"
 
-    # LLM — Google Gemini; swap SDK in llm_service.py to change provider
+    # LLM — Google Gemini
     google_api_key: str = "your-google-api-key-here"
-    llm_model: str = "gemini-2.0-flash"
+    llm_model: str = "gemini-3.6-flash"
+    llm_provider: str = "gemini"
 
     # Safety rules file path (relative to project root)
     safety_rules_path: str = "app/rules/safety_rules.json"
@@ -24,6 +25,10 @@ class Settings(BaseSettings):
     secret_key: str = "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
+
+    @property
+    def GROK_API_KEY(self) -> str:
+        return self.grok_api_key or self.xai_api_key
 
     # Aliases for compatibility
     @property
