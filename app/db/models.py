@@ -1,8 +1,11 @@
 """
 ORM models — all tables defined in one file for SQLAlchemy / Alembic.
 
+Note: Patient profiles have been merged into PatientEHR model (app.models.ehr).
+      Use PatientEHR for all patient-related queries.
+
 Active tables:
-  patients                — Patient profiles with patient_id primary key and MRN
+  patient_ehr             — Unified patient profiles + comprehensive medical records (see app.models.ehr)
   safety_assessments      — Immutable audit log owned by Safety (Seg 2)
   readmission_predictions — Readmission risk prediction scores owned by Care Manager
   post_discharge_statuses — 4-agent post-discharge monitoring states owned by Care Manager
@@ -33,39 +36,6 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(SQLEnum(UserRole), nullable=False)
     patient_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    created_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=True
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=True
-    )
-
-
-# ── Patient Profile ───────────────────────────────────────────────────────────
-
-
-class Patient(Base):
-    __tablename__ = "patients"
-
-    patient_id: Mapped[str] = mapped_column(
-        String, primary_key=True, default=lambda: f"PAT_{uuid.uuid4().hex[:8].upper()}"
-    )
-    id: Mapped[str | None] = mapped_column(String, nullable=True)
-    mrn: Mapped[str | None] = mapped_column(
-        String(50), index=True, nullable=True
-    )  # e.g., MRN00001, MRN040001
-    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    dob: Mapped[str | None] = mapped_column(String(10), nullable=True)         # YYYY-MM-DD
-    gender: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    contact_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    address: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    insurance_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    admission_date: Mapped[str | None] = mapped_column(String(25), nullable=True)  # YYYY-MM-DD or ISO timestamp
-    discharge_date: Mapped[str | None] = mapped_column(String(25), nullable=True)  # YYYY-MM-DD or ISO timestamp
-    is_active: Mapped[bool | None] = mapped_column(Boolean, default=True, nullable=True)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=True
     )

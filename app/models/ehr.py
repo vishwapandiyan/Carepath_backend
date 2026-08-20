@@ -6,19 +6,19 @@ from app.db.base import Base
 
 class PatientEHR(Base):
     """
-    Patient Electronic Health Record model.
-    Stores comprehensive patient medical information.
-    MRN is auto-generated on creation.
+    Patient Electronic Health Record model (Unified).
+    Stores comprehensive patient medical information + administrative profile data.
+    MRN and patient_id are auto-generated on creation.
     """
     __tablename__ = "patient_ehr"
     
     # Primary identification
     id = Column(Integer, primary_key=True, index=True)
-    mrn = Column(String, unique=True, index=True, nullable=False)  # Auto-generated
+    patient_id = Column(String, unique=True, index=True, nullable=False)  # PAT_XXXXXXXX format
+    mrn = Column(String, unique=True, index=True, nullable=False)  # Auto-generated MRNXXXXXXXX
     
     # Demographics
-    first_name = Column(String, nullable=False)
-    last_name = Column(String, nullable=False)
+    name = Column(String, nullable=False)
     date_of_birth = Column(Date, nullable=False)
     age = Column(Integer, nullable=False)
     gender = Column(String, nullable=False)  # male, female, other
@@ -96,9 +96,17 @@ class PatientEHR(Base):
     # Clinical Notes
     clinical_notes = Column(Text, nullable=True)
     
+    # Additional Administrative Fields (from Care Manager module)
+    contact_number = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    address = Column(String, nullable=True)
+    insurance_id = Column(String, nullable=True)
+    is_active = Column(Integer, default=1)  # 1=active, 0=inactive (soft delete)
+    deleted_at = Column(DateTime, nullable=True)
+    
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     def __repr__(self):
-        return f"<PatientEHR(mrn='{self.mrn}', name='{self.first_name} {self.last_name}')>"
+        return f"<PatientEHR(patient_id='{self.patient_id}', mrn='{self.mrn}', name='{self.name}')>"

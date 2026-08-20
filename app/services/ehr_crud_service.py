@@ -33,14 +33,30 @@ class EHRCRUDService:
                 return mrn
     
     @staticmethod
+    async def generate_patient_id(db: AsyncSession) -> str:
+        """
+        Generate a unique patient_id.
+        Format: PAT_ followed by 8 uppercase hex characters
+        """
+        while True:
+            hex_part = ''.join(random.choices(string.hexdigits.upper(), k=8))
+            patient_id = f"PAT_{hex_part}"
+            stmt = select(PatientEHR).where(PatientEHR.patient_id == patient_id)
+            res = await db.execute(stmt)
+            existing = res.scalar_one_or_none()
+            if not existing:
+                return patient_id
+    
+    @staticmethod
     async def create_patient_ehr(db: AsyncSession, ehr_data: PatientEHRCreate) -> PatientEHR:
-        """Create a new patient EHR record with auto-generated MRN"""
+        """Create a new patient EHR record with auto-generated MRN and patient_id"""
         mrn = await EHRCRUDService.generate_mrn(db)
+        patient_id = await EHRCRUDService.generate_patient_id(db)
         
         patient_ehr = PatientEHR(
+            patient_id=patient_id,
             mrn=mrn,
-            first_name=ehr_data.demographics.first_name,
-            last_name=ehr_data.demographics.last_name,
+            name=ehr_data.demographics.name,
             date_of_birth=ehr_data.demographics.date_of_birth,
             age=ehr_data.demographics.age,
             gender=ehr_data.demographics.gender.value,
@@ -109,13 +125,27 @@ class EHRCRUDService:
             follow_up_appointment_date=ehr_data.admission_data.follow_up_appointment_date if ehr_data.admission_data else None,
             total_charges_index_stay=ehr_data.admission_data.total_charges_index_stay if ehr_data.admission_data else None,
             
-            clinical_notes=ehr_data.clinical_notes
+            clinical_notes=ehr_data.clinical_notes,
+            
+            # Additional administrative fields
+            contact_number=ehr_data.contact_number,
+            email=ehr_data.email,
+            address=ehr_data.address,
+            insurance_id=ehr_data.insurance_id,
+            is_active=1  # New records are active by default
         )
         
         db.add(patient_ehr)
         await db.commit()
         await db.refresh(patient_ehr)
         return patient_ehr
+    
+    @staticmethod
+    async def get_patient_by_patient_id(db: AsyncSession, patient_id: str) -> Optional[PatientEHR]:
+        """Get patient EHR by patient_id (PAT_XXXXXXXX format)"""
+        stmt = select(PatientEHR).where(PatientEHR.patient_id == patient_id)
+        res = await db.execute(stmt)
+        return res.scalar_one_or_none()
     
     @staticmethod
     async def get_patient_by_id(db: AsyncSession, patient_id: int) -> Optional[PatientEHR]:
@@ -146,8 +176,7 @@ class EHRCRUDService:
             return None
         
         if ehr_update.demographics:
-            patient.first_name = ehr_update.demographics.first_name
-            patient.last_name = ehr_update.demographics.last_name
+            patient.name = ehr_update.demographics.name
             patient.date_of_birth = ehr_update.demographics.date_of_birth
             patient.age = ehr_update.demographics.age
             patient.gender = ehr_update.demographics.gender.value
@@ -225,6 +254,18 @@ class EHRCRUDService:
         if ehr_update.clinical_notes is not None:
             patient.clinical_notes = ehr_update.clinical_notes
         
+        # Update additional administrative fields
+        if ehr_update.contact_number is not None:
+            patient.contact_number = ehr_update.contact_number
+        if ehr_update.email is not None:
+            patient.email = ehr_update.email
+        if ehr_update.address is not None:
+            patient.address = ehr_update.address
+        if ehr_update.insurance_id is not None:
+            patient.insurance_id = ehr_update.insurance_id
+        if ehr_update.is_active is not None:
+            patient.is_active = ehr_update.is_active
+        
         patient.updated_at = datetime.utcnow()
         await db.commit()
         await db.refresh(patient)
@@ -232,12 +273,14 @@ class EHRCRUDService:
     
     @staticmethod
     async def delete_patient_ehr(db: AsyncSession, patient_id: int) -> bool:
-        """Delete patient EHR record"""
+        """Soft delete patient EHR record (set is_active=0)"""
         patient = await EHRCRUDService.get_patient_by_id(db, patient_id)
         if not patient:
             return False
         
-        await db.delete(patient)
+        # Soft delete: set is_active to 0 instead of hard delete
+        patient.is_active = 0
+        patient.updated_at = datetime.utcnow()
         await db.commit()
         return True
 

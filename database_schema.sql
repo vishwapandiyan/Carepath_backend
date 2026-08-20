@@ -21,41 +21,32 @@ CREATE INDEX idx_users_username ON users(username);
 CREATE INDEX idx_users_role ON users(role);
 
 -- ============================================
--- PATIENT RECORDS (Legacy/Simple)
+-- ELECTRONIC HEALTH RECORDS (EHR) - UNIFIED PATIENT TABLE
 -- ============================================
 
--- Patients Table: Basic patient information for authentication linkage
-CREATE TABLE IF NOT EXISTS patients (
-    id SERIAL PRIMARY KEY,
-    mrn VARCHAR(255) UNIQUE NOT NULL,
-    first_name VARCHAR(255) NOT NULL,
-    last_name VARCHAR(255) NOT NULL,
-    date_of_birth VARCHAR(50),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_patients_mrn ON patients(mrn);
-
--- ============================================
--- ELECTRONIC HEALTH RECORDS (EHR)
--- ============================================
-
--- Patient EHR Table: Comprehensive patient medical records
+-- Patient EHR Table: Comprehensive patient medical records (merged with patient profiles)
 CREATE TABLE IF NOT EXISTS patient_ehr (
     -- Primary Identification
     id SERIAL PRIMARY KEY,
+    patient_id VARCHAR(50) UNIQUE NOT NULL DEFAULT ('PAT_' || substr(md5(random()::text), 1, 8)),
     mrn VARCHAR(255) UNIQUE NOT NULL,
     
     -- Demographics
-    first_name VARCHAR(255) NOT NULL,
-    last_name VARCHAR(255) NOT NULL,
+    name VARCHAR(255) NOT NULL,
     date_of_birth DATE NOT NULL,
     age INTEGER NOT NULL CHECK (age >= 0 AND age <= 120),
     gender VARCHAR(50) NOT NULL CHECK (gender IN ('male', 'female', 'other')),
     bmi DECIMAL(5,2) NOT NULL CHECK (bmi >= 10.0 AND bmi <= 80.0),
     insurance_type VARCHAR(100) NOT NULL CHECK (insurance_type IN ('Medicare', 'Medicaid', 'Private', 'Self-pay', 'Medicare_Advantage', 'Uninsured')),
     race VARCHAR(100),
+    
+    -- Administrative/Contact Fields
+    contact_number VARCHAR(50),
+    email VARCHAR(255),
+    address VARCHAR(500),
+    insurance_id VARCHAR(100),
+    is_active INTEGER DEFAULT 1 CHECK (is_active IN (0, 1)),
+    deleted_at TIMESTAMP,
     
     -- Chronic Conditions (Binary Flags: 0 or 1)
     diabetes_flag INTEGER DEFAULT 0 CHECK (diabetes_flag IN (0, 1)),
@@ -133,17 +124,17 @@ CREATE TABLE IF NOT EXISTS patient_ehr (
 );
 
 -- Indexes for performance
+CREATE INDEX idx_patient_ehr_patient_id ON patient_ehr(patient_id);
 CREATE INDEX idx_patient_ehr_mrn ON patient_ehr(mrn);
-CREATE INDEX idx_patient_ehr_last_name ON patient_ehr(last_name);
+CREATE INDEX idx_patient_ehr_name ON patient_ehr(name);
 CREATE INDEX idx_patient_ehr_dob ON patient_ehr(date_of_birth);
+CREATE INDEX idx_patient_ehr_email ON patient_ehr(email);
+CREATE INDEX idx_patient_ehr_is_active ON patient_ehr(is_active);
 CREATE INDEX idx_patient_ehr_created_at ON patient_ehr(created_at);
 
 -- Foreign Key Constraints
-ALTER TABLE users 
-    ADD CONSTRAINT fk_users_patient 
-    FOREIGN KEY (patient_id) 
-    REFERENCES patients(id) 
-    ON DELETE SET NULL;
+-- Note: patient_id in users table now references patient_ehr.patient_id (string-based)
+-- Update after data migration if needed
 
 -- ============================================
 -- TRIGGER: Auto-update updated_at timestamp
@@ -162,11 +153,6 @@ CREATE TRIGGER update_users_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_patients_updated_at
-    BEFORE UPDATE ON patients
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
-
 CREATE TRIGGER update_patient_ehr_updated_at
     BEFORE UPDATE ON patient_ehr
     FOR EACH ROW
@@ -177,10 +163,12 @@ CREATE TRIGGER update_patient_ehr_updated_at
 -- ============================================
 
 COMMENT ON TABLE users IS 'User authentication and authorization table';
-COMMENT ON TABLE patients IS 'Basic patient information for authentication linkage';
-COMMENT ON TABLE patient_ehr IS 'Comprehensive patient electronic health records';
+COMMENT ON TABLE patient_ehr IS 'Unified comprehensive patient electronic health records (merged patient profiles + EHR data)';
 
-COMMENT ON COLUMN patient_ehr.mrn IS 'Medical Record Number - auto-generated unique identifier';
+COMMENT ON COLUMN patient_ehr.patient_id IS 'Internal patient identifier used across the system (PAT_XXXXXXXX format)';
+COMMENT ON COLUMN patient_ehr.mrn IS 'Medical Record Number - auto-generated unique identifier (MRNXXXXXXXX format)';
+COMMENT ON COLUMN patient_ehr.name IS 'Full patient name';
 COMMENT ON COLUMN patient_ehr.bmi IS 'Body Mass Index - required for ML Model 1 (Readmission)';
 COMMENT ON COLUMN patient_ehr.charlson_comorbidity_index IS 'Charlson Comorbidity Index (0-37)';
 COMMENT ON COLUMN patient_ehr.clinical_notes IS 'Free-text clinical notes, observations, discharge summaries';
+COMMENT ON COLUMN patient_ehr.is_active IS 'Soft delete flag: 1=active, 0=inactive/deleted';

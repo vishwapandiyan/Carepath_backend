@@ -19,7 +19,8 @@ from app.care_manager.post_discharge.schemas import (
     PostDischargeStatusOut,
     ResponseAnalyserAgentStatus,
 )
-from app.db.models import Patient, PostDischargeStatus
+from app.models.ehr import PatientEHR
+from app.db.models import PostDischargeStatus
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +31,8 @@ async def get_post_discharge_status(patient_id: str, db: AsyncSession) -> PostDi
     Care Plan, Follow-up, Response Analyser, Appointment agents.
     If no status record exists yet, initializes default baseline agent status.
     """
-    query = select(Patient).where(
-        (Patient.patient_id == patient_id)
-        | (Patient.mrn == patient_id)
-        | (Patient.id == patient_id)
+    query = select(PatientEHR).where(
+        (PatientEHR.patient_id == patient_id) | (PatientEHR.mrn == patient_id)
     )
     patient = (await db.execute(query)).scalars().first()
 
@@ -43,7 +42,7 @@ async def get_post_discharge_status(patient_id: str, db: AsyncSession) -> PostDi
             detail=f"Patient '{patient_id}' not found.",
         )
 
-    pid = patient.patient_id or patient.id
+    pid = patient.patient_id
 
     status_query = select(PostDischargeStatus).where(
         PostDischargeStatus.patient_id == pid

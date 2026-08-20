@@ -33,8 +33,7 @@ class DischargeDestinationEnum(str, Enum):
 
 
 class DemographicsSchema(BaseModel):
-    first_name: str
-    last_name: str
+    name: str
     date_of_birth: date
     age: int = Field(..., ge=0, le=120)
     gender: GenderEnum
@@ -126,6 +125,12 @@ class PatientEHRCreate(BaseModel):
     utilization_history: UtilizationHistorySchema
     admission_data: Optional[AdmissionDataSchema] = None
     clinical_notes: Optional[str] = None
+    
+    # Additional administrative fields
+    contact_number: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+    insurance_id: Optional[str] = None
 
 
 class PatientEHRUpdate(BaseModel):
@@ -138,16 +143,23 @@ class PatientEHRUpdate(BaseModel):
     utilization_history: Optional[UtilizationHistorySchema] = None
     admission_data: Optional[AdmissionDataSchema] = None
     clinical_notes: Optional[str] = None
+    
+    # Additional administrative fields
+    contact_number: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+    insurance_id: Optional[str] = None
+    is_active: Optional[int] = None
 
 
 class PatientEHRResponse(BaseModel):
     """Schema for EHR response"""
     id: int
+    patient_id: str
     mrn: str
     
     # Demographics
-    first_name: str
-    last_name: str
+    name: str
     date_of_birth: date
     age: int
     gender: str
@@ -225,6 +237,14 @@ class PatientEHRResponse(BaseModel):
     # Clinical Notes
     clinical_notes: Optional[str]
     
+    # Additional Administrative Fields
+    contact_number: Optional[str]
+    email: Optional[str]
+    address: Optional[str]
+    insurance_id: Optional[str]
+    is_active: int
+    deleted_at: Optional[datetime]
+    
     # Timestamps
     created_at: datetime
     updated_at: datetime
@@ -236,12 +256,15 @@ class PatientEHRResponse(BaseModel):
 class PatientEHRListResponse(BaseModel):
     """Simplified schema for listing patients"""
     id: int
+    patient_id: str
     mrn: str
-    first_name: str
-    last_name: str
+    name: str
     date_of_birth: date
     age: int
     gender: str
+    contact_number: Optional[str]
+    email: Optional[str]
+    is_active: int
     created_at: datetime
     
     class Config:

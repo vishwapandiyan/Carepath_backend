@@ -10,7 +10,8 @@ from app.core.security import (
     get_password_hash,
     verify_password,
 )
-from app.db.models import Patient, User, UserRole
+from app.db.models import User, UserRole
+from app.models.ehr import PatientEHR
 from app.db.session import get_db
 from app.schemas import (
     CareManagerSignupRequest,
@@ -105,7 +106,7 @@ async def signup_patient(
         )
     
     # Check if MRN is already registered
-    stmt_patient = select(Patient).where(Patient.mrn == mrn)
+    stmt_patient = select(PatientEHR).where(PatientEHR.mrn == mrn)
     res_patient = await db.execute(stmt_patient)
     existing_patient = res_patient.scalar_one_or_none()
     

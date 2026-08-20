@@ -2,16 +2,16 @@
 Care Manager — Module 4: Analytics Router (/analytics)
 """
 
-from fastapi import APIRouter, Depends, Security
+from fastapi import APIRouter, Depends
 
 from app.care_manager.analytics import schemas, service
-from app.core.security import verify_api_key
+from app.core.security import get_current_care_manager
 from app.db.base import get_db
+from app.models.user import User
 
 router = APIRouter(
     prefix="/analytics",
     tags=["Care Manager - Module 4: Analytics"],
-    dependencies=[Security(verify_api_key)],
 )
 
 
@@ -23,6 +23,7 @@ router = APIRouter(
 )
 async def get_aggregate_analytics(
     db=Depends(get_db),
+    current_user: User = Depends(get_current_care_manager),
 ) -> schemas.AggregateAnalyticsOut:
     return await service.get_aggregate_analytics(db)
 
@@ -36,5 +37,6 @@ async def get_aggregate_analytics(
 async def get_patient_analytics(
     patient_id: str,
     db=Depends(get_db),
+    current_user: User = Depends(get_current_care_manager),
 ) -> schemas.PatientAnalyticsOut:
     return await service.get_patient_analytics(patient_id, db)

@@ -2,16 +2,16 @@
 Care Manager — Module 1: Patient CRUD Router (/patients)
 """
 
-from fastapi import APIRouter, Depends, Query, Security, status
+from fastapi import APIRouter, Depends, Query, status
 
 from app.care_manager.patient import schemas, service
-from app.core.security import verify_api_key
+from app.core.security import get_current_care_manager
 from app.db.base import get_db
+from app.models.user import User
 
 router = APIRouter(
     prefix="/patients",
     tags=["Care Manager - Module 1: Patient"],
-    dependencies=[Security(verify_api_key)],
 )
 
 
@@ -25,6 +25,7 @@ router = APIRouter(
 async def create_patient(
     payload: schemas.PatientCreate,
     db=Depends(get_db),
+    current_user: User = Depends(get_current_care_manager),
 ) -> schemas.PatientOut:
     return await service.create_patient(payload, db)
 
@@ -41,6 +42,7 @@ async def list_patients(
     search: str | None = Query(None, description="Optional search term (name, MRN, or insurance ID)"),
     include_inactive: bool = Query(False, description="Whether to include soft-deleted patients"),
     db=Depends(get_db),
+    current_user: User = Depends(get_current_care_manager),
 ) -> schemas.PatientListOut:
     return await service.list_patients(skip, limit, search, include_inactive, db)
 
@@ -54,6 +56,7 @@ async def list_patients(
 async def get_patient(
     patient_id: str,
     db=Depends(get_db),
+    current_user: User = Depends(get_current_care_manager),
 ) -> schemas.PatientOut:
     return await service.get_patient_by_id(patient_id, db)
 
@@ -68,6 +71,7 @@ async def update_patient(
     patient_id: str,
     payload: schemas.PatientUpdate,
     db=Depends(get_db),
+    current_user: User = Depends(get_current_care_manager),
 ) -> schemas.PatientOut:
     return await service.update_patient(patient_id, payload, db)
 
@@ -80,5 +84,6 @@ async def update_patient(
 async def delete_patient(
     patient_id: str,
     db=Depends(get_db),
+    current_user: User = Depends(get_current_care_manager),
 ):
     return await service.delete_patient(patient_id, db)

@@ -13,7 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.care_manager.readmission.schemas import ReadmissionPredictionOut
-from app.db.models import Patient, ReadmissionPrediction, SafetyAssessment
+from app.models.ehr import PatientEHR
+from app.db.models import ReadmissionPrediction, SafetyAssessment
 
 logger = logging.getLogger(__name__)
 
@@ -23,20 +24,18 @@ async def get_patient_data_from_db(patient_id: str, db: AsyncSession) -> dict:
     Decoupled internal data-pull logic.
     Pull patient demographic profile & historical triage assessments from database.
     """
-    query = select(Patient).where(
-        (Patient.patient_id == patient_id)
-        | (Patient.mrn == patient_id)
-        | (Patient.id == patient_id)
+    query = select(PatientEHR).where(
+        (PatientEHR.patient_id == patient_id) | (PatientEHR.mrn == patient_id)
     )
     patient = (await db.execute(query)).scalars().first()
 
-    if patient is None or patient.is_active is False:
+    if patient is None or patient.is_active == 0:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Patient '{patient_id}' not found.",
         )
 
-    pid = patient.patient_id or patient.id
+    pid = patient.patient_id
 
     # Fetch latest safety triage assessment if available
     safety_query = (

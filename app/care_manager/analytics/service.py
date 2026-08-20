@@ -12,7 +12,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.care_manager.analytics.schemas import AggregateAnalyticsOut, PatientAnalyticsOut
-from app.db.models import Patient, PostDischargeStatus, ReadmissionPrediction, SafetyAssessment
+from app.models.ehr import PatientEHR
+from app.db.models import PostDischargeStatus, ReadmissionPrediction, SafetyAssessment
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +25,9 @@ async def get_aggregate_analytics(db: AsyncSession) -> AggregateAnalyticsOut:
     now = datetime.now(timezone.utc)
 
     # Patients count
-    total_patients = (await db.execute(select(func.count(Patient.id)))).scalar() or 0
+    total_patients = (await db.execute(select(func.count(PatientEHR.id)))).scalar() or 0
     active_patients = (
-        await db.execute(select(func.count(Patient.id)).where(Patient.is_active.is_(True)))
+        await db.execute(select(func.count(PatientEHR.id)).where(PatientEHR.is_active == 1))
     ).scalar() or 0
 
     # Readmission Risk metrics
@@ -82,8 +83,8 @@ async def get_patient_analytics(patient_id: str, db: AsyncSession) -> PatientAna
     """
     Compute analytics scoped to a single patient.
     """
-    query = select(Patient).where(
-        (Patient.id == patient_id) | (Patient.mrn == patient_id)
+    query = select(PatientEHR).where(
+        (PatientEHR.patient_id == patient_id) | (PatientEHR.mrn == patient_id)
     )
     patient = (await db.execute(query)).scalars().first()
 

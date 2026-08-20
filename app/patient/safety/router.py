@@ -1,13 +1,13 @@
-from fastapi import APIRouter, Depends, Security
+from fastapi import APIRouter, Depends
 
 from app.patient.safety import schemas, service
-from app.core.security import verify_api_key
+from app.core.security import get_current_patient
 from app.db.base import get_db
+from app.models.user import User
 
 router = APIRouter(
     prefix="/safety",
     tags=["Patient - Module 2: Safety"],
-    dependencies=[Security(verify_api_key)],
 )
 
 
@@ -24,6 +24,7 @@ router = APIRouter(
 async def submit_red_flags(
     session_id: str,
     payload: schemas.RedFlagsIn,
+    current_user: User = Depends(get_current_patient),
 ) -> schemas.RedFlagsOut:
     return await service.save_red_flags(session_id, payload)
 
@@ -41,6 +42,7 @@ async def submit_red_flags(
 async def evaluate(
     session_id: str,
     db=Depends(get_db),
+    current_user: User = Depends(get_current_patient),
 ) -> schemas.SafetyResult:
     return await service.run_safety_engine(session_id, db)
 
@@ -54,5 +56,6 @@ async def evaluate(
 async def get_assessment(
     session_id: str,
     db=Depends(get_db),
+    current_user: User = Depends(get_current_patient),
 ) -> schemas.SafetyResult:
     return await service.get_latest_assessment(session_id, db)

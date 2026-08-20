@@ -1,12 +1,12 @@
-from fastapi import APIRouter, Security
+from fastapi import APIRouter, Depends
 
 from app.patient.intake import schemas, service
-from app.core.security import verify_api_key
+from app.core.security import get_current_patient
+from app.models.user import User
 
 router = APIRouter(
     prefix="/intake",
     tags=["Patient - Module 1: Intake"],
-    dependencies=[Security(verify_api_key)],
 )
 
 
@@ -17,7 +17,10 @@ router = APIRouter(
     summary="Create intake session",
     description="Start a new intake session for a patient. Returns the session ID and the first question to ask.",
 )
-async def create_session(payload: schemas.SessionCreate) -> schemas.SessionOut:
+async def create_session(
+    payload: schemas.SessionCreate,
+    current_user: User = Depends(get_current_patient),
+) -> schemas.SessionOut:
     return await service.create_intake_session(payload)
 
 
@@ -32,7 +35,9 @@ async def create_session(payload: schemas.SessionCreate) -> schemas.SessionOut:
     ),
 )
 async def send_message(
-    session_id: str, payload: schemas.MessageIn
+    session_id: str,
+    payload: schemas.MessageIn,
+    current_user: User = Depends(get_current_patient),
 ) -> schemas.MessageResponse:
     return await service.handle_message(session_id, payload)
 
@@ -43,5 +48,8 @@ async def send_message(
     summary="Get intake session",
     description="Return the current state of an intake session including all extracted features.",
 )
-async def get_session(session_id: str) -> schemas.SessionOut:
+async def get_session(
+    session_id: str,
+    current_user: User = Depends(get_current_patient),
+) -> schemas.SessionOut:
     return await service.get_intake_session(session_id)

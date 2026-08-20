@@ -1,6 +1,5 @@
 # Models module
 from app.models.user import User, UserRole
-from app.models.patient import Patient
 from app.models.ehr import PatientEHR
 
-__all__ = ["User", "UserRole", "Patient", "PatientEHR"]
+__all__ = ["User", "UserRole", "PatientEHR"]

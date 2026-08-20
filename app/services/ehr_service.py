@@ -39,15 +39,13 @@ class EHRService:
             patient = res.scalar_one_or_none()
             if patient:
                 return {
-                    "first_name": patient.first_name,
-                    "last_name": patient.last_name,
+                    "name": patient.name,
                     "date_of_birth": str(patient.date_of_birth)
                 }
         except Exception:
             pass
         return {
-            "first_name": "Patient",
-            "last_name": mrn,
+            "name": "Patient " + mrn,
             "date_of_birth": "1990-01-01"
         }
 
