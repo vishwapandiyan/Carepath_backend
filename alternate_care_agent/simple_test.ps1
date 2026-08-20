@@ -1,7 +1,0 @@
-Set-Location "c:\Users\Hp\Downloads\alternate_care_agent\alternate_care_agent"
-Write-Host "Starting step 2"
-python -m pytest tests/test_location_maps.py -v --tb=short | Tee-Object -FilePath "step2.txt"
-Write-Host "Step 2 done"
-Write-Host "Starting step 3"
-python -m pytest tests/ --tb=short -q | Tee-Object -FilePath "step3.txt"
-Write-Host "Step 3 done"
