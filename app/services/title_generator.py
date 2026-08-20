@@ -4,6 +4,7 @@ Uses Google Gemini API to auto-generate chat titles
 """
 import logging
 from datetime import datetime
+from typing import Optional, Dict, Any
 import google.generativeai as genai
 from app.config import settings
 
