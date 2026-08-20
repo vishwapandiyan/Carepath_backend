@@ -179,7 +179,7 @@ if st.session_state.phase == "start":
 elif st.session_state.phase == "intake":
     st.title("🏥 CTS Emergency Triage")
     st.caption(f"Session: `{st.session_state.session_id}` | Patient: `{st.session_state.patient_id}`")
-    st.progress(0.25, text="Step 1 of 3 — Collecting symptoms")
+    st.progress(0.25, text="Step 1 of 3 — Collecting symptoms (8 questions)")
 
     # Render chat history
     for msg in st.session_state.chat_messages:
@@ -199,7 +199,7 @@ elif st.session_state.phase == "intake":
 elif st.session_state.phase == "safety":
     st.title("🚨 Emergency Red-Flag Checklist")
     st.caption(f"Session: `{st.session_state.session_id}`")
-    st.progress(0.65, text="Step 2 of 3 — Emergency screening")
+    st.progress(0.65, text="Step 2 of 3 — Emergency screening (12 red flags)")
 
     # Show chat so far (collapsed for space)
     with st.expander("📋 View intake summary", expanded=False):
@@ -235,6 +235,8 @@ elif st.session_state.phase == "safety":
         "high_fever":           "Do you have a dangerously high fever — 103°F (39.4°C) or higher?",
         "unable_to_walk":       "Are you completely unable to walk, stand, or bear any weight?",
         "severe_abdominal_pain":"Are you having severe, sharp, or crushing abdominal (belly) pain?",
+        "vomiting_blood":       "Are you vomiting blood or is there blood in your stool?",
+        "severe_dehydration":   "Are you severely dehydrated — unable to keep down fluids, very dry mouth, dizziness when standing?",
     }
 
     with st.form("red_flags_form"):
@@ -300,12 +302,76 @@ elif st.session_state.phase == "verdict":
             """
             <div style="background:#1a7a4a;border-radius:16px;padding:32px;text-align:center;color:white;">
                 <h1 style="margin:0;font-size:3rem;">✅ No Emergency Detected</h1>
-                <p style="font-size:1.4rem;margin-top:8px;">Routing to clinical assessment pathway.</p>
-                <p style="font-size:1rem;opacity:0.85;">Next: ML-based clinical decision support (CMS/ML Pathway)</p>
+                <p style="font-size:1.4rem;margin-top:8px;">Analyzing if ED visit is necessary...</p>
             </div>
             """,
             unsafe_allow_html=True,
         )
+        
+        st.divider()
+        
+        # === NEW: Call ED Avoidable Prediction ===
+        if "ed_result" not in st.session_state:
+            with st.spinner("🤖 Running ED Avoidable ML analysis..."):
+                ed_request = {
+                    "patient_mrn": st.session_state.patient_id,
+                    "intake_data": st.session_state.intake_features or {},
+                    "safety_flags": st.session_state.red_flags or {}
+                }
+                
+                ed_result = api_post("/patient/ed-prediction", ed_request)
+                st.session_state.ed_result = ed_result
+        else:
+            ed_result = st.session_state.ed_result
+        
+        if ed_result and ed_result.get('success'):
+            avoidable = ed_result['avoidable_ed']
+            probability = ed_result['probability']
+            confidence = ed_result['confidence']
+            recommendation = ed_result['recommendation']
+            
+            # Display result based on prediction
+            if avoidable == "YES":
+                st.markdown(
+                    """
+                    <div style="background:#2563eb;border-radius:12px;padding:24px;margin:16px 0;">
+                        <h2 style="margin:0;color:white;">💡 ED Visit May Be Avoidable</h2>
+                        <p style="color:white;margin-top:8px;opacity:0.9;">Alternative care pathways recommended</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                st.info("**Note**: This patient can be routed to alternative care pathways (telemedicine, urgent care, primary care follow-up). Further routing will be added in future updates.")
+                
+            else:  # avoidable == "NO"
+                st.markdown(
+                    """
+                    <div style="background:#f59e0b;border-radius:12px;padding:24px;margin:16px 0;">
+                        <h2 style="margin:0;color:white;">⚠️ ED Visit Recommended</h2>
+                        <p style="color:white;margin-top:8px;opacity:0.9;">Patient should proceed to emergency department</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                st.warning("**Note**: This patient should be routed to the emergency department. ED routing pathway will be added in future updates.")
+            
+            # Show metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Prediction", avoidable)
+            with col2:
+                st.metric("Confidence", confidence.upper())
+            with col3:
+                st.metric("Probability", f"{probability*100:.1f}%")
+            
+            st.divider()
+            st.markdown("**Clinical Recommendation:**")
+            st.info(recommendation)
+            
+        else:
+            st.error("⚠️ ED prediction failed. Please contact support.")
+            if ed_result:
+                st.error(f"Error: {ed_result.get('detail', 'Unknown error')}")
 
     else:  # ERROR
         st.error(f"⚠️ Safety engine error: {result.get('error_detail', 'Unknown')}")
@@ -316,24 +382,52 @@ elif st.session_state.phase == "verdict":
     # Summary card
     with st.expander("📊 Full Session Summary", expanded=True):
         col1, col2, col3 = st.columns(3)
-        col1.metric("Result", outcome)
+        col1.metric("Safety Result", outcome)
         col2.metric("Next Action", next_action)
         col3.metric("Rules Triggered", len(triggered))
+        
+        # Add ED prediction results if available
+        if outcome == "NO" and hasattr(st.session_state, 'ed_result') and st.session_state.ed_result:
+            st.divider()
+            st.subheader("🤖 ED Avoidable ML Prediction")
+            ed = st.session_state.ed_result
+            col1, col2, col3 = st.columns(3)
+            col1.metric("ED Avoidable", ed.get('avoidable_ed', '—'))
+            col2.metric("Confidence", ed.get('confidence', '—').upper())
+            col3.metric("Probability", f"{ed.get('probability', 0)*100:.1f}%")
 
         if st.session_state.intake_features:
-            st.subheader("Intake Data")
+            st.divider()
+            st.subheader("📝 Intake Data (8 Questions)")
             f = st.session_state.intake_features
-            st.table({
-                "Field": ["Chief Complaint", "Onset", "Pain Scale", "Location"],
+            
+            # Display all 8 intake fields
+            intake_display = {
+                "Field": [
+                    "Chief Complaint",
+                    "Onset",
+                    "Pain Scale",
+                    "Location",
+                    "Pain Duration",
+                    "Pain Character",
+                    "Pain Radiating",
+                    "Symptom Trend"
+                ],
                 "Value": [
                     f.get("chief_complaint") or "—",
                     f.get("symptom_onset") or "—",
                     str(f.get("pain_scale")) if f.get("pain_scale") is not None else "—",
                     f.get("location") or "—",
+                    f.get("pain_duration") or "—",
+                    f.get("pain_character") or "—",
+                    f.get("pain_radiating") or "—",
+                    f.get("symptom_trend") or "—",
                 ],
-            })
+            }
+            st.table(intake_display)
 
-        st.subheader("Red Flag Answers")
+        st.divider()
+        st.subheader("🚨 Red Flag Answers (12 Questions)")
         flag_data = {"Symptom": [], "Answer": []}
         labels = {
             "chest_pain": "Chest Pain/Pressure",
@@ -345,6 +439,10 @@ elif st.session_state.phase == "verdict":
             "anaphylaxis": "Anaphylaxis",
             "high_fever": "High Fever ≥103°F",
             "unable_to_walk": "Unable to Walk",
+            "severe_abdominal_pain": "Severe Abdominal Pain",
+            "vomiting_blood": "Vomiting Blood/Blood in Stool",
+            "severe_dehydration": "Severe Dehydration",
+        }
             "severe_abdominal_pain": "Severe Abdominal Pain",
         }
         for field, label in labels.items():
