@@ -1,0 +1,89 @@
+[
+  {
+    "name": "chronic flareup, worsening, high CCI -> SPEC-001-FLAREUP",
+    "patient": {
+      "primary_symptom_category": "chronic_disease_flareup",
+      "symptom_trend": "worsening",
+      "charlson_comorbidity_index": 8
+    },
+    "expected_rule_id": "SPEC-001-FLAREUP"
+  },
+  {
+    "name": "chronic flareup, stable, default -> PCP-001-FLAREUP",
+    "patient": {
+      "primary_symptom_category": "chronic_disease_flareup",
+      "symptom_trend": "same",
+      "pain_level_self_reported": 5,
+      "charlson_comorbidity_index": 2
+    },
+    "expected_rule_id": "PCP-001-FLAREUP"
+  },
+  {
+    "name": "minor infection, default -> UC-001-INFECTION",
+    "patient": {
+      "primary_symptom_category": "minor_infection",
+      "symptom_trend": "worsening",
+      "pain_level_self_reported": 6
+    },
+    "expected_rule_id": "UC-001-INFECTION"
+  },
+  {
+    "name": "back pain, sudden onset -> UC-003-BACKPAIN",
+    "patient": {
+      "primary_symptom_category": "back_pain",
+      "pain_onset": "sudden"
+    },
+    "expected_rule_id": "UC-003-BACKPAIN"
+  },
+  {
+    "name": "back pain, gradual, worsening, recurrent ED visits -> SPEC-003-ORTHO",
+    "patient": {
+      "primary_symptom_category": "back_pain",
+      "pain_onset": "gradual",
+      "symptom_trend": "worsening",
+      "ed_visits_past_year": 4
+    },
+    "expected_rule_id": "SPEC-003-ORTHO"
+  },
+  {
+    "name": "mild breathing difficulty, hours duration -> UC-002-BREATHING",
+    "patient": {
+      "primary_symptom_category": "mild_breathing_difficulty",
+      "pain_duration": "hours"
+    },
+    "expected_rule_id": "UC-002-BREATHING"
+  },
+  {
+    "name": "mild breathing + copd + chronic conditions -> SPEC-002-PULM",
+    "patient": {
+      "primary_symptom_category": "mild_breathing_difficulty",
+      "copd_asthma_flag": 1,
+      "chronic_condition_count": 3,
+      "pain_duration": "days"
+    },
+    "expected_rule_id": "SPEC-002-PULM"
+  },
+  {
+    "name": "mild general symptom, improving, low pain -> TELE-003-GENERAL",
+    "patient": {
+      "primary_symptom_category": "mild_general_symptom",
+      "symptom_trend": "improving",
+      "pain_level_self_reported": 2
+    },
+    "expected_rule_id": "TELE-003-GENERAL"
+  },
+  {
+    "name": "dental pain -> SPEC-004-DENTAL (DENTISTRY destination)",
+    "patient": {
+      "primary_symptom_category": "dental_pain"
+    },
+    "expected_rule_id": "SPEC-004-DENTAL"
+  },
+  {
+    "name": "unrecognized symptom category -> FALLBACK-999",
+    "patient": {
+      "primary_symptom_category": "something_not_in_the_rule_file"
+    },
+    "expected_rule_id": "FALLBACK-999"
+  }
+]

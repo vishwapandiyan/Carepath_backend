@@ -1,0 +1,392 @@
+rule_version: "routing_rules_v0.1.0-draft"
+scope_note: >
+  This rule set operates ONLY on patients that an upstream model has already
+  classified as avoidable_ed=1 (non-emergency) AND that carry no active
+  red-flag symptom (flag_shortness_of_breath, flag_chest_pain_sweating_nausea,
+  flag_loss_of_consciousness, flag_confusion_altered_mental_state,
+  flag_uncontrolled_bleeding, flag_severe_allergic_reaction, flag_stroke_signs,
+  flag_vomiting_blood_or_blood_in_stool, flag_high_fever_stiff_neck_rash,
+  flag_severe_dehydration). This agent does not perform red-flag detection —
+  that is out of scope per the product spec.
+
+# Evaluated in descending priority order. First matching rule wins.
+# destination in {PCP, URGENT_CARE, SPECIALIST, TELEHEALTH, DENTISTRY}
+# specialty is only set when destination == SPECIALIST
+
+rules:
+
+  - rule_id: SAFETY-000
+    priority: 100
+    destination: URGENT_CARE
+    specialty: null
+    conditions:
+      any:
+        - feature: primary_symptom_category
+          operator: in
+          value: [chest_pain, severe_breathing_difficulty, severe_abdominal_pain_or_trauma, neuro_deficit]
+    explanation: >
+      RECOMMENDED RULE — REQUIRES CLINICAL VALIDATION. These symptom
+      categories should never reach this agent if the upstream red-flag
+      filter is working correctly (observed in <0.05% of in-scope rows in
+      the synthetic data, all appearing to be label noise/leakage). This
+      rule is a defensive fallback only: route to URGENT_CARE and flag for
+      manual review rather than silently classifying into PCP/telehealth.
+    status: RECOMMENDED_REQUIRES_VALIDATION
+
+  - rule_id: SPEC-002-PULM
+    priority: 50
+    destination: SPECIALIST
+    specialty: PULMONOLOGY
+    conditions:
+      all:
+        - feature: primary_symptom_category
+          operator: equals
+          value: mild_breathing_difficulty
+        - feature: copd_asthma_flag
+          operator: equals
+          value: 1
+        - feature: chronic_condition_count
+          operator: gte
+          value: 2
+    explanation: >
+      DOCUMENT-SUPPORTED PATTERN. In the synthetic PQE04_Asthma population,
+      85% carry copd_asthma_flag=1 with chronic_condition_count mean 2.22.
+      Doc 1 (sec. 11-14) requires condition-plus-symptom-plus-complexity,
+      not a single flag, before escalating to specialist — implemented here.
+    status: RECOMMENDED_REQUIRES_VALIDATION
+
+  - rule_id: SPEC-003-ORTHO
+    priority: 45
+    destination: SPECIALIST
+    specialty: ORTHOPEDICS
+    conditions:
+      all:
+        - feature: primary_symptom_category
+          operator: equals
+          value: back_pain
+        - feature: pain_onset
+          operator: equals
+          value: gradual
+        - feature: symptom_trend
+          operator: in
+          value: [same, worsening]
+        - feature: ed_visits_past_year
+          operator: gte
+          value: 3
+    explanation: >
+      DOCUMENT-SUPPORTED PATTERN. PQE05_BackPain rows average 3.52 ED
+      visits/year (recurrent utilizers) with 69% gradual onset. Persistent,
+      non-improving, recurrent back pain is escalated to an orthopedics
+      candidate rather than PCP, per doc 1's "persistence/recurrent pattern"
+      criterion for specialist routing.
+    status: RECOMMENDED_REQUIRES_VALIDATION
+
+  - rule_id: SPEC-001-FLAREUP
+    priority: 45
+    destination: SPECIALIST
+    specialty: CHRONIC_DISEASE_MANAGEMENT_REVIEW
+    conditions:
+      all:
+        - feature: primary_symptom_category
+          operator: equals
+          value: chronic_disease_flareup
+        - feature: symptom_trend
+          operator: equals
+          value: worsening
+        - feature: charlson_comorbidity_index
+          operator: gte
+          value: 7
+    explanation: >
+      RECOMMENDED RULE — REQUIRES CLINICAL VALIDATION. Chronic-flareup rows
+      carry near-uniform (~52-55%) prevalence across all seven chronic-flag
+      columns, i.e. the synthetic data does NOT indicate which single organ
+      system is driving the flare-up. A production version needs either (a)
+      a body-system-specific symptom field, or (b) a "dominant condition"
+      field, to route to a specific specialty (cardiology/endocrinology/
+      nephrology/etc.) — see feature-gap note below. Until that field
+      exists, this rule can only flag "specialist-level chronic disease
+      review needed" for a human/PCP to route further; it should NOT be
+      used to auto-select a named specialty in production.
+    status: RECOMMENDED_REQUIRES_VALIDATION
+
+  - rule_id: TELE-001-FLAREUP
+    priority: 40
+    destination: TELEHEALTH
+    specialty: null
+    conditions:
+      all:
+        - feature: primary_symptom_category
+          operator: equals
+          value: chronic_disease_flareup
+        - feature: symptom_trend
+          operator: in
+          value: [same, improving]
+        - feature: pain_level_self_reported
+          operator: lte
+          value: 3
+    explanation: >
+      DOCUMENT-SUPPORTED PATTERN. Stable/improving, low-pain chronic
+      flare-ups fit doc 1 sec. 16's "stable + low physical-exam requirement"
+      telehealth criteria — a medication/management check-in does not
+      require in-person exam.
+    status: RECOMMENDED_REQUIRES_VALIDATION
+
+  - rule_id: PCP-001-FLAREUP
+    priority: 30
+    destination: PCP
+    specialty: null
+    conditions:
+      all:
+        - feature: primary_symptom_category
+          operator: equals
+          value: chronic_disease_flareup
+    explanation: >
+      DOCUMENT-SUPPORTED. Default for chronic_disease_flareup when neither
+      the specialist nor telehealth conditions above are met. Matches
+      PQE02_ChronicACSC pattern: has_pcp_flag=74%, gradual onset, routine
+      continuity-of-care management (doc 1 sec. 6, "chronic follow-up -> PCP").
+    status: DOCUMENT_SUPPORTED
+
+  - rule_id: TELE-002-INFECTION
+    priority: 40
+    destination: TELEHEALTH
+    specialty: null
+    conditions:
+      all:
+        - feature: primary_symptom_category
+          operator: equals
+          value: minor_infection
+        - feature: symptom_trend
+          operator: equals
+          value: improving
+        - feature: pain_level_self_reported
+          operator: lte
+          value: 3
+    explanation: >
+      RECOMMENDED RULE — REQUIRES CLINICAL VALIDATION. An improving, mild
+      minor infection may only need a virtual check / prescription
+      adjustment. Clinical review needed to confirm this is safe versus
+      requiring in-person exam (e.g. to rule out abscess, cellulitis
+      spread) before enabling in production.
+    status: RECOMMENDED_REQUIRES_VALIDATION
+
+  - rule_id: UC-001-INFECTION
+    priority: 30
+    destination: URGENT_CARE
+    specialty: null
+    conditions:
+      all:
+        - feature: primary_symptom_category
+          operator: equals
+          value: minor_infection
+    explanation: >
+      DOCUMENT-SUPPORTED. Default for minor_infection (PQE03_AcuteACSC):
+      acute onset, moderate pain (mean 4.5/10), same-day evaluation
+      appropriate — matches doc 1 sec. 7 "acute, non-emergency, needs
+      physical examination" -> URGENT_CARE definition.
+    status: DOCUMENT_SUPPORTED
+
+  - rule_id: UC-002-BREATHING
+    priority: 30
+    destination: URGENT_CARE
+    specialty: null
+    conditions:
+      all:
+        - feature: primary_symptom_category
+          operator: equals
+          value: mild_breathing_difficulty
+        - feature: pain_duration
+          operator: equals
+          value: hours
+    explanation: >
+      DOCUMENT-SUPPORTED. Recent-onset (hours), non-red-flag breathing
+      difficulty not meeting the SPEC-002-PULM chronic-disease pattern
+      still warrants same-day physical evaluation (auscultation, SpO2
+      check) rather than routine PCP scheduling.
+    status: DOCUMENT_SUPPORTED
+
+  - rule_id: TELE-005-BREATHING
+    priority: 25
+    destination: TELEHEALTH
+    specialty: null
+    conditions:
+      all:
+        - feature: primary_symptom_category
+          operator: equals
+          value: mild_breathing_difficulty
+        - feature: pain_duration
+          operator: equals
+          value: days
+        - feature: symptom_trend
+          operator: in
+          value: [same, improving]
+        - feature: pain_level_self_reported
+          operator: lte
+          value: 3
+    explanation: >
+      RECOMMENDED RULE — REQUIRES CLINICAL VALIDATION. Extends the
+      low-severity/stable-or-improving telehealth pattern to
+      mild_breathing_difficulty, scoped to days-duration only so it never
+      competes with UC-002-BREATHING (hours-duration, same-day exam
+      needed regardless of trend or pain). Sits below SPEC-002-PULM
+      (priority 50) so copd_asthma_flag=1 + chronic_condition_count>=2
+      still escalates to Pulmonology even at low current pain. CAUTION
+      beyond the usual validation need: breathing complaints are
+      conventionally assessed by auscultation/SpO2, not self-reported
+      pain, so using pain_level_self_reported as the severity proxy here
+      is weaker clinical grounding than for the pain-based categories
+      (back_pain, minor_infection, mild_general_symptom) — this rule
+      should get explicit clinical sign-off on using pain as a proxy for
+      breathing severity, not just on the threshold value, before
+      activation.
+    status: RECOMMENDED_REQUIRES_VALIDATION
+
+  - rule_id: PCP-002-BREATHING
+    priority: 20
+    destination: PCP
+    specialty: null
+    conditions:
+      all:
+        - feature: primary_symptom_category
+          operator: equals
+          value: mild_breathing_difficulty
+    explanation: >
+      DOCUMENT-SUPPORTED. Fallback for mild_breathing_difficulty that is
+      days-duration and doesn't meet the pulmonology escalation pattern
+      or the TELE-005-BREATHING low-pain/stable profile: stable,
+      longer-standing, appropriate for routine PCP follow-up.
+    status: DOCUMENT_SUPPORTED
+
+  - rule_id: UC-003-BACKPAIN
+    priority: 30
+    destination: URGENT_CARE
+    specialty: null
+    conditions:
+      all:
+        - feature: primary_symptom_category
+          operator: equals
+          value: back_pain
+        - feature: pain_onset
+          operator: equals
+          value: sudden
+    explanation: >
+      DOCUMENT-SUPPORTED. Sudden-onset back pain (31% of PQE05_BackPain
+      rows) not meeting a red-flag threshold still merits prompt physical
+      evaluation rather than routine PCP scheduling, per doc 1's PCP-vs-UC
+      distinction (longitudinal vs acute/same-day).
+    status: DOCUMENT_SUPPORTED
+
+  - rule_id: TELE-004-BACKPAIN
+    priority: 30
+    destination: TELEHEALTH
+    specialty: null
+    conditions:
+      all:
+        - feature: primary_symptom_category
+          operator: equals
+          value: back_pain
+        - feature: pain_onset
+          operator: equals
+          value: gradual
+        - feature: symptom_trend
+          operator: in
+          value: [same, improving]
+        - feature: pain_level_self_reported
+          operator: lte
+          value: 3
+    explanation: >
+      RECOMMENDED RULE — REQUIRES CLINICAL VALIDATION. Extends the same
+      low-pain/stable-or-improving telehealth pattern used for
+      mild_general_symptom (TELE-003) and chronic_disease_flareup
+      (TELE-001) to back_pain. Unlike those two, doc 1 explicitly found
+      NO discriminative signal linking duration/trend to
+      chronic_condition_count for back pain (sec. "duration/trend split...
+      does NOT correlate"), so this threshold is an engineering
+      extrapolation, not a dataset-confirmed pattern — flag for clinician
+      sign-off before activation. Conditioned on gradual onset only, so it
+      never competes with UC-003-BACKPAIN (sudden onset). Sits below
+      SPEC-003-ORTHO (priority 45) so a recurrent utilizer
+      (ed_visits_past_year>=3) still routes to specialist review even at
+      low current pain, since the recurrence pattern itself is the
+      concerning signal, not the single-visit pain score.
+    status: RECOMMENDED_REQUIRES_VALIDATION
+
+  - rule_id: PCP-003-BACKPAIN
+    priority: 20
+    destination: PCP
+    specialty: null
+    conditions:
+      all:
+        - feature: primary_symptom_category
+          operator: equals
+          value: back_pain
+    explanation: >
+      DOCUMENT-SUPPORTED. Fallback for back pain that isn't recurrent/
+      persistent enough to trigger SPEC-003-ORTHO and doesn't meet the
+      TELE-004-BACKPAIN low-pain/stable/gradual-onset profile (e.g.
+      sudden onset without meeting UC-003, or gradual onset with higher
+      pain / worsening trend): routine PCP management.
+    status: DOCUMENT_SUPPORTED
+
+  - rule_id: TELE-003-GENERAL
+    priority: 30
+    destination: TELEHEALTH
+    specialty: null
+    conditions:
+      all:
+        - feature: primary_symptom_category
+          operator: equals
+          value: mild_general_symptom
+        - feature: symptom_trend
+          operator: equals
+          value: improving
+        - feature: pain_level_self_reported
+          operator: lte
+          value: 3
+    explanation: >
+      DOCUMENT-SUPPORTED. Matches NonPQE_FollowUp majority pattern (60%
+      improving trend, mean pain 2.43, high prior utilization suggesting an
+      existing care relationship) — a virtual follow-up fits doc 1 sec. 16.
+    status: DOCUMENT_SUPPORTED
+
+  - rule_id: PCP-004-GENERAL
+    priority: 20
+    destination: PCP
+    specialty: null
+    conditions:
+      all:
+        - feature: primary_symptom_category
+          operator: equals
+          value: mild_general_symptom
+    explanation: >
+      DOCUMENT-SUPPORTED. Fallback for mild_general_symptom rows that are
+      not improving/low-pain: an in-person PCP visit is the safer default
+      over telehealth.
+    status: DOCUMENT_SUPPORTED
+
+  - rule_id: SPEC-004-DENTAL
+    priority: 20
+    destination: DENTISTRY
+    specialty: null
+    conditions:
+      all:
+        - feature: primary_symptom_category
+          operator: equals
+          value: dental_pain
+    explanation: >
+      Dental pain requires evaluation by a dentist. Urgent-care clinics
+      generally cannot treat dental conditions; a dental specialist referral
+      is the appropriate destination for this symptom category.
+    status: RECOMMENDED_REQUIRES_VALIDATION
+
+  - rule_id: FALLBACK-999
+    priority: 0
+    destination: PCP
+    specialty: null
+    conditions:
+      all: []
+    explanation: >
+      Default fallback when no other rule matches. Low-confidence; should
+      trigger a clarification question in production rather than silently
+      routing to PCP.
+    status: SAFETY_FALLBACK

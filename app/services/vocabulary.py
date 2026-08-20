@@ -21,6 +21,10 @@ SYSTEM_PROMPT: str = (
     '  "symptom_onset":   "string or null  (when it started, e.g. \'2 hours ago\', \'this morning\')",\n'
     '  "pain_scale":       integer 0-10 or null  (patient\'s self-reported severity),\n'
     '  "location":        "string or null  (body region, e.g. \'left chest\', \'lungs\')",\n'
+    '  "pain_duration":   "string or null  (how long symptoms have lasted, e.g. \'2 hours\', \'3 days\')",\n'
+    '  "pain_character":  "string or null  (quality: sharp, dull, throbbing, burning, cramping, pressure)",\n'
+    '  "pain_radiating":  "string or null  (does pain spread: yes/no and where)",\n'
+    '  "symptom_trend":   "string or null  (better, worse, or stable)",\n'
     '  "user_query_answer": "string or null  (concise 2-3 sentence answer if patient asked a question/query, otherwise null)"\n'
     "}\n\n"
     "Return ONLY the JSON object. No markdown, no explanation, no extra keys."
@@ -45,6 +49,21 @@ QUESTION_TEMPLATES: dict[str, str] = {
         "Where exactly in your body are you experiencing this? "
         "Can you describe or point to the specific area?"
     ),
+    "pain_duration": (
+        "How long have you been experiencing this symptom? "
+        "Please tell me in hours, days, or weeks."
+    ),
+    "pain_character": (
+        "How would you describe the quality of the pain or discomfort? "
+        "For example: sharp, dull, throbbing, burning, cramping, pressure, stabbing, or aching."
+    ),
+    "pain_radiating": (
+        "Does the pain spread or radiate to other parts of your body? "
+        "Please answer yes or no, and if yes, tell me where it spreads to."
+    ),
+    "symptom_trend": (
+        "Are your symptoms getting better, getting worse, or staying about the same since they started?"
+    ),
 }
 
 # Ordered list — intake is COMPLETE only when all these fields are non-None
@@ -53,4 +72,8 @@ REQUIRED_FIELD_ORDER: list[str] = [
     "symptom_onset",
     "pain_scale",
     "location",
+    "pain_duration",
+    "pain_character",
+    "pain_radiating",
+    "symptom_trend",
 ]
