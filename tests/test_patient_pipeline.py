@@ -7,6 +7,11 @@ Unit and integration tests for Patient-Side pipeline segments:
 
 from fastapi.testclient import TestClient
 from app.main import app
+from app.core.security import get_current_patient
+from app.models.user import User, UserRole
+
+mock_user = User(username="test_patient", role=UserRole.PATIENT, patient_id="PAT_000001")
+app.dependency_overrides[get_current_patient] = lambda: mock_user
 
 client = TestClient(app)
 

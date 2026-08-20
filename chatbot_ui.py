@@ -303,22 +303,22 @@ elif st.session_state.phase == "safety":
         "severe_dehydration":   "Are you severely dehydrated — unable to keep down fluids, very dry mouth, dizziness when standing?",
     }
 
-    with st.form("red_flags_form"):
+    with st.form("red_flags_form", clear_on_submit=False):
         responses = {}
         for field, question in RED_FLAG_QUESTIONS.items():
             col_q, col_a = st.columns([3, 1])
             with col_q:
-                st.markdown(f"**{question}**")
+                st.write(f"**{question}**")
             with col_a:
                 val = st.radio(
-                    label=field,
+                    label=question,
                     options=["No", "Yes"],
                     horizontal=True,
                     label_visibility="collapsed",
                     key=f"rf_{field}",
                 )
-                responses[field] = val == "Yes"
-            st.divider()
+                responses[field] = (val == "Yes")
+            st.write("---")
 
         submitted = st.form_submit_button(
             "🔍 Run Emergency Screening →",

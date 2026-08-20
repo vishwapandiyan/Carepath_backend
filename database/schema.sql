@@ -11,6 +11,22 @@
 -- \c carepath_db;
 
 -- ============================================
+-- TABLE: patients
+-- Purpose: Basic patient records (legacy, minimal data)
+-- ============================================
+CREATE TABLE IF NOT EXISTS patients (
+    id SERIAL PRIMARY KEY,
+    mrn VARCHAR(50) UNIQUE NOT NULL,
+    first_name VARCHAR(255) NOT NULL,
+    last_name VARCHAR(255) NOT NULL,
+    date_of_birth VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_patients_mrn ON patients(mrn);
+
+-- ============================================
 -- TABLE: users
 -- Purpose: User authentication and role management
 -- ============================================
@@ -26,24 +42,8 @@ CREATE TABLE IF NOT EXISTS users (
     CONSTRAINT fk_patient FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE SET NULL
 );
 
-CREATE INDEX idx_users_username ON users(username);
-CREATE INDEX idx_users_role ON users(role);
-
--- ============================================
--- TABLE: patients
--- Purpose: Basic patient records (legacy, minimal data)
--- ============================================
-CREATE TABLE IF NOT EXISTS patients (
-    id SERIAL PRIMARY KEY,
-    mrn VARCHAR(50) UNIQUE NOT NULL,
-    first_name VARCHAR(255) NOT NULL,
-    last_name VARCHAR(255) NOT NULL,
-    date_of_birth VARCHAR(50),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_patients_mrn ON patients(mrn);
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 
 -- ============================================
 -- TABLE: patient_ehr
@@ -138,10 +138,10 @@ CREATE TABLE IF NOT EXISTS patient_ehr (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_patient_ehr_mrn ON patient_ehr(mrn);
-CREATE INDEX idx_patient_ehr_name ON patient_ehr(last_name, first_name);
-CREATE INDEX idx_patient_ehr_dob ON patient_ehr(date_of_birth);
-CREATE INDEX idx_patient_ehr_created ON patient_ehr(created_at);
+CREATE INDEX IF NOT EXISTS idx_patient_ehr_mrn ON patient_ehr(mrn);
+CREATE INDEX IF NOT EXISTS idx_patient_ehr_name ON patient_ehr(last_name, first_name);
+CREATE INDEX IF NOT EXISTS idx_patient_ehr_dob ON patient_ehr(date_of_birth);
+CREATE INDEX IF NOT EXISTS idx_patient_ehr_created ON patient_ehr(created_at);
 
 -- ============================================
 -- TRIGGERS
@@ -157,14 +157,17 @@ END;
 $$ language 'plpgsql';
 
 -- Apply trigger to users table
+DROP TRIGGER IF EXISTS update_users_updated_at ON users;
 CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Apply trigger to patients table
+DROP TRIGGER IF EXISTS update_patients_updated_at ON patients;
 CREATE TRIGGER update_patients_updated_at BEFORE UPDATE ON patients
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Apply trigger to patient_ehr table
+DROP TRIGGER IF EXISTS update_patient_ehr_updated_at ON patient_ehr;
 CREATE TRIGGER update_patient_ehr_updated_at BEFORE UPDATE ON patient_ehr
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 

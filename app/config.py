@@ -11,11 +11,11 @@ class Settings(BaseSettings):
     api_key: str = "changeme-api-key"
 
     # Database (PostgreSQL async)
-    database_url: str = "postgresql+asyncpg://postgres:admin123@localhost:5432/readmission_db"
+    database_url: str = "postgresql+asyncpg://postgres:admin123@localhost:5432/ehr_db"
 
     # LLM — Google Gemini
     google_api_key: str = "your-google-api-key-here"
-    llm_model: str = "gemini-3.6-flash"
+    llm_model: str = "gemini-3.1-flash-lite"
     llm_provider: str = "gemini"
 
     # Safety rules file path (relative to project root)
