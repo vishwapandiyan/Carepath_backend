@@ -1,0 +1,4 @@
+# Development and test dependencies — not installed in production containers.
+# Installs everything from requirements.txt first, then adds test tooling.
+-r requirements.txt
+pytest==9.0.3
