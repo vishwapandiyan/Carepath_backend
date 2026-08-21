@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 class LLMExtraction(BaseModel):
     """
     Structured output produced by the LLM from a patient's free-text message.
-    Captures the 4 fields needed for emergency triage routing, plus an optional answer to patient queries.
+    Captures only the 4 fields needed for emergency triage routing.
 
     All fields are nullable — the LLM must NOT guess or infer missing information.
     """
@@ -13,11 +13,6 @@ class LLMExtraction(BaseModel):
     symptom_onset: str | None = None          # replaces duration — onset is clinically more relevant
     pain_scale: int | None = Field(None, ge=0, le=10)
     location: str | None = None
-    pain_duration: str | None = None
-    pain_character: str | None = None
-    pain_radiating: str | None = None
-    symptom_trend: str | None = None
-    user_query_answer: str | None = None
 
 
 # ── Request schemas ───────────────────────────────────────────────────────────
@@ -35,7 +30,7 @@ class MessageIn(BaseModel):
 class SessionOut(BaseModel):
     session_id: str
     patient_id: str
-    status: str                              # IN_PROGRESS | COMPLETE | ERROR
+    status: str                              #  COMPLETE | ERROR
     features: LLMExtraction | None = None
     messages: list[dict] = Field(default_factory=list)
     next_question: str | None = None
@@ -47,5 +42,5 @@ class MessageResponse(BaseModel):
     session_id: str
     extracted: LLMExtraction | None = None
     next_question: str | None = None
-    status: str                              # IN_PROGRESS | COMPLETE | ERROR
+    status: str                              #  COMPLETE | ERROR
     error_detail: str | None = None

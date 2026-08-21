@@ -79,16 +79,6 @@ async def create_intake_session(payload: SessionCreate) -> SessionOut:
 async def handle_message(session_id: str, payload: MessageIn) -> MessageResponse:
     session = _get_session_or_404(session_id)
 
-    # Idempotent: return final state if already done
-    if session["status"] == "COMPLETE":
-        raw = session.get("features") or {}
-        return MessageResponse(
-            session_id=session_id,
-            extracted=LLMExtraction(**raw),
-            next_question=None,
-            status="COMPLETE",
-        )
-
     # Append patient message to in-memory history
     session_store.append_message(session_id, role="user", content=payload.content)
     history = session_store.get_session(session_id)["messages"]
@@ -99,7 +89,7 @@ async def handle_message(session_id: str, payload: MessageIn) -> MessageResponse
             session_history=history[:-1],   # exclude the message we just appended
             new_message=payload.content,
         )
-    except LLMExtractionError as exc:
+    except (LLMExtractionError, Exception) as exc:
         logger.error("LLM failure | session=%s | %s", session_id, exc)
         session_store.update_session(session_id, status="ERROR")
         return MessageResponse(
@@ -114,27 +104,42 @@ async def handle_message(session_id: str, payload: MessageIn) -> MessageResponse
     merged = _merge_extractions(existing, extraction)
     merged_dict = merged.model_dump()
 
+    # Determine next missing question
     next_q = next_missing_field(merged_dict)
-    new_status = "COMPLETE" if next_q is None else "IN_PROGRESS"
+    is_already_complete = session.get("status") == "COMPLETE"
+    new_status = "COMPLETE" if (next_q is None or is_already_complete) else "IN_PROGRESS"
+
+    # Build combined assistant response: answer user query if present + prompt next missing field
+    query_answer = extraction.user_query_answer.strip() if extraction.user_query_answer else None
+    if query_answer and next_q and not is_already_complete:
+        assistant_msg = f"{query_answer}\n\n{next_q}"
+    elif query_answer:
+        assistant_msg = query_answer
+    elif next_q and not is_already_complete:
+        assistant_msg = next_q
+    elif is_already_complete:
+        assistant_msg = "I have noted that. Please let me know if you have any other questions."
+    else:
+        assistant_msg = None
 
     session_store.update_session(
         session_id,
         features=merged_dict,
-        next_question=next_q,
+        next_question=assistant_msg,
         status=new_status,
     )
 
-    if next_q:
-        session_store.append_message(session_id, role="assistant", content=next_q)
+    if assistant_msg:
+        session_store.append_message(session_id, role="assistant", content=assistant_msg)
 
     logger.info(
         "Message handled | session=%s | status=%s | next_q=%s",
-        session_id, new_status, next_q,
+        session_id, new_status, assistant_msg,
     )
     return MessageResponse(
         session_id=session_id,
         extracted=merged,
-        next_question=next_q,
+        next_question=assistant_msg,
         status=new_status,
     )
 
