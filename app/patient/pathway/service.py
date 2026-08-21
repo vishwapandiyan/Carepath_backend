@@ -5,6 +5,12 @@ from .schemas import CarePlanOption, PathwayDecision, PathwayRequest, PathwayRes
 from app.services.ed_feature_mapper import ed_feature_mapper
 from app.services.ed_prediction_service import ed_prediction_service
 
+# Decision boundary on the model's probability that the ED visit is AVOIDABLE.
+# The model's own hard 0.5 cutoff sends most cases to the ER; a slightly more
+# lenient cutoff routes borderline patients to alternative care. Raise this to
+# be more conservative (more ER), lower it to route more to alternative care.
+AVOIDABLE_PROB_THRESHOLD = 0.45
+
 
 def run_pathway(
     patient_id: str,
@@ -28,11 +34,17 @@ def run_pathway(
     location = (request.location if request else None) or "General"
     red_flags = (request.red_flag_answers if request else {}) or {}
 
+    # Full intake vector so the ML feature mapper doesn't fall back to defaults
+    # for signals the chatbot actually collected.
     intake_data = {
         "chief_complaint": chief_complaint,
         "symptom_onset": symptom_onset,
         "pain_scale": pain_scale,
         "location": location,
+        "pain_duration": (request.pain_duration if request else None),
+        "pain_character": (request.pain_character if request else None),
+        "pain_radiating": (request.pain_radiating if request else None),
+        "symptom_trend": (request.symptom_trend if request else None),
     }
 
     # 2. Risk Calculation using ML Model (Random Forest classifier)
@@ -52,17 +64,22 @@ def run_pathway(
         prob_avoidable = ml_prediction["probability"]
         # Emergency risk score = probability ED visit is NOT avoidable
         final_score = round((1.0 - prob_avoidable) * 100.0, 1)
-        avoidable_ed = ml_prediction["avoidable_ed"]
         confidence = ml_prediction["confidence"]
-        
+
+        # Decision: trust the model probability against a tunable threshold, with a
+        # hard red-flag override. (Red-flag cases normally never reach here — the
+        # safety engine routes them to the emergency pathway first — but we keep the
+        # override as a safety net.)
         red_flag_count = sum(1 for v in red_flags.values() if v is True)
-        if avoidable_ed == "NO" or final_score >= 50.0 or red_flag_count > 0:
+        if red_flag_count > 0 or prob_avoidable < AVOIDABLE_PROB_THRESHOLD:
             decision = PathwayDecision.NOT_AVOIDABLE
             risk_level = "CRITICAL" if final_score >= 80.0 else "HIGH"
+            avoidable_ed = "NO"
         else:
             decision = PathwayDecision.POTENTIALLY_AVOIDABLE
             risk_level = "MODERATE" if final_score >= 30.0 else "LOW"
-            
+            avoidable_ed = "YES"
+
         explanation = (
             f"ML Model Prediction ({ed_prediction_service.model_bundle.get('model_name', 'Random Forest')}): "
             f"Avoidable ED = '{avoidable_ed}' with {confidence} confidence. "

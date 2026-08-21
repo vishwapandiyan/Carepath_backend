@@ -192,6 +192,11 @@ async def run_safety_engine(session_id: str, db: AsyncSession) -> SafetyResult:
                 symptom_onset=intake_features.get("symptom_onset"),
                 pain_scale=intake_features.get("pain_scale", 0),
                 location=intake_features.get("location"),
+                # Forward the richer intake signals so the model isn't starved of context.
+                pain_duration=intake_features.get("pain_duration"),
+                pain_character=intake_features.get("pain_character"),
+                pain_radiating=intake_features.get("pain_radiating"),
+                symptom_trend=intake_features.get("symptom_trend"),
                 red_flag_answers=clean_red_flags,
             )
             pathway_res = run_pathway(

@@ -22,6 +22,12 @@ class PathwayRequest(BaseModel):
     symptom_onset: Optional[str] = None
     pain_scale: Optional[int] = Field(None, ge=0, le=10)
     location: Optional[str] = None
+    # Additional intake signals collected by the chatbot — passed to the ML
+    # feature mapper so the model sees the same richness as an offline test.
+    pain_duration: Optional[str] = None
+    pain_character: Optional[str] = None
+    pain_radiating: Optional[str] = None
+    symptom_trend: Optional[str] = None
     red_flag_answers: Optional[Dict[str, bool]] = None
 
 
