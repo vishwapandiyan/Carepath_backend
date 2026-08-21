@@ -1,9 +1,13 @@
 import logging
+import warnings
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
+
+# Suppress future warnings early
+warnings.filterwarnings('ignore', category=FutureWarning, module='google.generativeai')
 
 from app.api.v1.api import api_router
 from app.care_manager import care_manager_router
@@ -14,17 +18,29 @@ from app.patient import patient_router
 # Import all models to ensure they are registered with SQLAlchemy
 from app.models import User, PatientEHR, MLPrediction
 
+# Configure logging
 logging.basicConfig(
-    level=logging.DEBUG if settings.app_env == "development" else logging.INFO,
+    level=logging.INFO,  # Always use INFO to reduce noise
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Silence SQLAlchemy engine logs completely
+logging.getLogger("sqlalchemy.engine").setLevel(logging.ERROR)
+logging.getLogger("sqlalchemy.pool").setLevel(logging.ERROR)
+logging.getLogger("sqlalchemy.dialects").setLevel(logging.ERROR)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── Startup ───────────────────────────────────────────────────────────────
     logger.info("Starting AI Medical System API  env=%s", settings.app_env)
+    
+    # Temporarily disable SQLAlchemy logging during migrations
+    sqlalchemy_logger = logging.getLogger("sqlalchemy.engine")
+    original_level = sqlalchemy_logger.level
+    sqlalchemy_logger.setLevel(logging.CRITICAL)
+    
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -68,20 +84,25 @@ async def lifespan(app: FastAPI):
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_patients_mrn ON patients (mrn) WHERE mrn IS NOT NULL;",
         ]
 
-
-
-
-
+        # Run migrations silently
+        migration_count = 0
         for stmt in col_statements:
             try:
                 async with engine.begin() as conn:
                     await conn.execute(text(stmt))
+                    migration_count += 1
             except Exception as col_exc:
                 logger.debug("Column migration skipped (%s)", col_exc)
 
-        logger.info("Database tables and columns verified / created.")
+        # Restore SQLAlchemy logging level
+        sqlalchemy_logger.setLevel(original_level)
+        
+        logger.info("Database tables and columns verified / created (%d migrations applied).", migration_count)
 
     except Exception as exc:
+        # Restore SQLAlchemy logging level even on error
+        sqlalchemy_logger.setLevel(original_level)
+        
         logger.warning(
             "Database unavailable at startup (%s). "
             "Safety /evaluate and /assessment endpoints require PostgreSQL. "
