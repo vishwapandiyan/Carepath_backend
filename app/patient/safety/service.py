@@ -23,6 +23,7 @@ from app.patient.safety.schemas import RedFlagsIn, RedFlagsOut, SafetyResult
 from app.patient.pathway.service import run_pathway
 from app.patient.pathway.schemas import PathwayRequest, PathwayResponse
 from app.models.ehr import PatientEHR
+from app.models import User
 from app.config import settings
 from app.core import session_store
 from app.db.models import SafetyAssessment
@@ -58,10 +59,25 @@ def _get_session_or_404(session_id: str) -> dict:
 async def _get_ehr_for_patient(patient_id: str, db: AsyncSession) -> Optional[PatientEHR]:
     if not patient_id:
         return None
+
+    # 1. Look up User table if patient_id is a username or patient_id string
+    target_ids = [patient_id]
+    try:
+        user_res = await db.execute(
+            select(User).where(or_(User.username == patient_id, User.patient_id == patient_id))
+        )
+        user = user_res.scalars().first()
+        if user and user.patient_id:
+            target_ids.append(user.patient_id)
+    except Exception as err:
+        logger.warning("Could not query User model during EHR resolution: %s", err)
+
+    cleaned_name = patient_id.replace("_", " ").replace("-", " ")
+
     conds = [
-        PatientEHR.patient_id == patient_id,
-        PatientEHR.mrn == patient_id,
-        PatientEHR.name.ilike(f"%{patient_id}%"),
+        PatientEHR.patient_id.in_(target_ids),
+        PatientEHR.mrn.in_(target_ids),
+        PatientEHR.name.ilike(f"%{cleaned_name}%"),
     ]
     if patient_id.isdigit():
         conds.append(PatientEHR.id == int(patient_id))
