@@ -333,15 +333,44 @@ async def navigate(
             )
 
     except Exception as exc:
-        logger.warning("navigate: Appointment Agent handoff failed: %s", exc)
+        logger.error("navigate: Appointment Agent handoff failed with exception: %s", exc, exc_info=True)
         appointment_agent_response = f"Provider search unavailable: {exc}"
 
     # Build response with optional appointment fields
+    # Convert nearby_providers to ProviderCandidate format for top_providers
+    logger.info("navigate: building response with %d providers", len(nearby_providers) if nearby_providers else 0)
+    provider_candidates = []
+    if nearby_providers:
+        for p in nearby_providers[:10]:  # Limit to top 10
+            provider_candidates.append(ProviderCandidate(
+                provider_id=p.get("provider_id", ""),
+                name=p.get("provider_name", "Unknown"),
+                destination_type=decision.destination,
+                specialty=p.get("specialty") or decision.specialty,
+                latitude=p.get("latitude", 0.0),
+                longitude=p.get("longitude", 0.0),
+                address=p.get("address"),
+                distance_km=p.get("distance_km"),
+            ))
+        
+        # Update the stored recommendation with the provider candidates
+        # by creating a new recommendation with the providers and storing it with the same ID
+        updated_rec = Recommendation(
+            recommendation_id=stored_rec.recommendation_id,
+            mrn=mrn,
+            decision=stored_rec.decision,
+            top_providers=provider_candidates,
+        )
+        # Replace the stored recommendation
+        recommendation_store._items[recommendation_id].recommendation = updated_rec
+        logger.info("navigate: updated stored recommendation with %d providers", len(provider_candidates))
+    
+    logger.info("navigate: returning response to frontend (providers=%d)", len(provider_candidates))
     return Recommendation(
         recommendation_id=stored_rec.recommendation_id,
         mrn=mrn,
         decision=stored_rec.decision,
-        top_providers=stored_rec.top_providers,
+        top_providers=provider_candidates,
         appointment_agent_response=appointment_agent_response,
         nearby_providers=nearby_providers,
     )
@@ -358,6 +387,8 @@ def availability(request: AppointmentAvailabilityRequest) -> AvailabilityWorkflo
 
     care_type and specialty are derived from the stored CareDecision —
     the client must NOT supply them independently.
+    
+    Queries the database directly for available slots.
     """
     try:
         provider = recommendation_store.require_provider(
@@ -370,25 +401,68 @@ def availability(request: AppointmentAvailabilityRequest) -> AvailabilityWorkflo
     care_type = recommendation.decision.destination
     specialty = recommendation.decision.specialty
 
-    patient_location = recommendation_store.get_patient_location(
-        request.recommendation_id
-    )
-    if patient_location is not None:
-        patient_context = AppointmentPatientContext(
-            latitude=patient_location.latitude,
-            longitude=patient_location.longitude,
-        )
-    else:
-        patient_context = None
+    # Query database for available slots
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        from datetime import datetime, timedelta
+        from app.config import settings
+        
+        # Get database URL and convert from async to sync format
+        db_url = settings.DATABASE_URL
+        if 'postgresql+asyncpg://' in db_url:
+            db_url = db_url.replace('postgresql+asyncpg://', 'postgresql://')
+        
+        # Connect using psycopg2 (synchronous)
+        conn = psycopg2.connect(db_url)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        try:
+            # Build date filter based on date_range
+            now = datetime.now()
+            if request.date_range == "next_30_days":
+                end_date = now + timedelta(days=30)
+            else:  # default to next_7_days
+                end_date = now + timedelta(days=7)
+            
+            # Query available slots
+            cursor.execute("""
+                SELECT slot_id, provider_id, start_time, end_time
+                FROM provider_slots
+                WHERE provider_id = %s 
+                  AND status = 'AVAILABLE'
+                  AND start_time >= %s
+                  AND start_time <= %s
+                ORDER BY start_time
+                LIMIT 20
+            """, (provider.provider_id, now, end_date))
+            
+            rows = cursor.fetchall()
+            
+            # Convert to AppointmentSlot objects
+            slots = []
+            for row in rows:
+                slots.append(AppointmentSlot(
+                    slot_id=row['slot_id'],
+                    provider_id=row['provider_id'],
+                    start_time=row['start_time'].isoformat(),
+                    end_time=row['end_time'].isoformat(),
+                ))
+            
+            logger.info(
+                "availability: fetched %d slots from database for provider=%s",
+                len(slots), provider.provider_id,
+            )
+            
+        finally:
+            cursor.close()
+            conn.close()
+            
+    except Exception as db_exc:
+        logger.error("availability: database error: %s", db_exc, exc_info=True)
+        # Return empty slots list instead of failing
+        slots = []
 
-    slots = appointment_client.get_availability(
-        provider_id=provider.provider_id,
-        care_type=care_type,
-        specialty=specialty,
-        date_range=request.date_range,
-        patient_id=request.patient_id,
-        patient_context=patient_context,
-    )
     return AvailabilityWorkflowResponse(
         available_slots=slots,
         provider_id=provider.provider_id,
@@ -403,8 +477,8 @@ def availability(request: AppointmentAvailabilityRequest) -> AvailabilityWorkflo
 
 @app.post("/appointments/book", response_model=AppointmentConfirmation)
 def book(request: BookingRequest) -> AppointmentConfirmation:
-    """Validate the provider against the stored recommendation, then hand off
-    booking to the shared Appointment Agent.
+    """Validate the provider against the stored recommendation, then book
+    the appointment directly in the database.
     """
     try:
         provider = recommendation_store.require_provider(
@@ -417,29 +491,120 @@ def book(request: BookingRequest) -> AppointmentConfirmation:
     care_type = recommendation.decision.destination
     specialty = recommendation.decision.specialty
 
-    patient_location = recommendation_store.get_patient_location(
-        request.recommendation_id
-    )
-    if patient_location is not None:
-        book_patient_context = AppointmentPatientContext(
-            latitude=patient_location.latitude,
-            longitude=patient_location.longitude,
+    # Book appointment in database
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        from datetime import datetime
+        from app.config import settings
+        import uuid
+        
+        # Get database URL and convert from async to sync format
+        db_url = settings.DATABASE_URL
+        if 'postgresql+asyncpg://' in db_url:
+            db_url = db_url.replace('postgresql+asyncpg://', 'postgresql://')
+        
+        # Connect using psycopg2 (synchronous)
+        conn = psycopg2.connect(db_url)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        try:
+            # First, verify the slot is still available
+            cursor.execute("""
+                SELECT slot_id, provider_id, start_time, end_time, status
+                FROM provider_slots
+                WHERE slot_id = %s AND provider_id = %s AND status = 'AVAILABLE'
+                FOR UPDATE
+            """, (request.slot_id, request.provider_id))
+            
+            slot_row = cursor.fetchone()
+            
+            if not slot_row:
+                conn.rollback()
+                raise HTTPException(
+                    status_code=409, 
+                    detail="Slot is no longer available or does not exist"
+                )
+            
+            # Generate appointment ID
+            appointment_id = f"appt_{uuid.uuid4().hex[:12]}"
+            
+            # The patient_id from the request is actually the MRN
+            patient_mrn = request.patient_id
+            
+            # Create appointment record
+            cursor.execute("""
+                INSERT INTO appointments (
+                    appointment_id, mrn, provider_id, slot_id,
+                    start_time, end_time, destination, specialty, status, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                appointment_id,
+                patient_mrn,
+                request.provider_id,
+                request.slot_id,
+                slot_row['start_time'],
+                slot_row['end_time'],
+                care_type,
+                specialty,
+                'BOOKED',
+                datetime.now()
+            ))
+            
+            # Update slot status to BOOKED
+            cursor.execute("""
+                UPDATE provider_slots
+                SET status = 'BOOKED'
+                WHERE slot_id = %s
+            """, (request.slot_id,))
+            
+            # Commit transaction
+            conn.commit()
+            
+            logger.info(
+                "book: created appointment %s for patient %s with provider %s",
+                appointment_id, request.patient_id, request.provider_id,
+            )
+            
+            # Return appointment confirmation
+            return AppointmentConfirmation(
+                appointment_id=appointment_id,
+                patient_id=request.patient_id,
+                status="BOOKED",
+                provider_id=request.provider_id,
+                provider_name=provider.name,
+                care_type=care_type,
+                specialty=specialty,
+                slot=AppointmentSlot(
+                    slot_id=slot_row['slot_id'],
+                    provider_id=slot_row['provider_id'],
+                    start_time=slot_row['start_time'].isoformat(),
+                    end_time=slot_row['end_time'].isoformat(),
+                ),
+            )
+            
+        except HTTPException:
+            raise
+        except Exception as db_exc:
+            conn.rollback()
+            logger.error("book: database error: %s", db_exc, exc_info=True)
+            raise HTTPException(
+                status_code=500, 
+                detail="We're having trouble booking your appointment right now. Please try again in a moment."
+            )
+        finally:
+            cursor.close()
+            conn.close()
+            
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("book: unexpected error: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=500, 
+            detail="We're having trouble booking your appointment right now. Please try again in a moment."
         )
-    else:
-        book_patient_context = None
-
-    return appointment_service.book_appointment(
-        BookingWorkflowRequest(
-            patient_id=request.patient_id,
-            recommendation_id=request.recommendation_id,
-            provider_id=request.provider_id,
-            slot_id=request.slot_id,
-        ),
-        care_type=care_type,
-        specialty=specialty,
-        provider_name=provider.name,
-        patient_context=book_patient_context,
-    )
 
 
 # ---------------------------------------------------------------------------

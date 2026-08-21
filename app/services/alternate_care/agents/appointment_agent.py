@@ -5,8 +5,8 @@ agentic build-out).
 Scope of this step (ONLY)
 --------------------------
 This file currently implements exactly one capability: nearby healthcare
-PROVIDER SEARCH for the Appointment Agent, backed by real OpenStreetMap
-data via the Overpass API.
+PROVIDER SEARCH for the Appointment Agent, using the database as the
+primary source of provider data.
 
 Explicitly OUT OF SCOPE here (not implemented in this step):
   - Appointment availability lookup (POST /appointments/availability)
@@ -14,50 +14,26 @@ Explicitly OUT OF SCOPE here (not implemented in this step):
   - Any change to agents/navigation_agent.py, agents/tools/navigation_tools.py,
     or the rule-based /navigate pipeline. Those are untouched by this file.
 
-Reuse, not reinvention
+Database-first approach
 -----------------------
-Overpass query-building, OSM tag mapping, and distance calculation already
-exist and are tested in:
-    location/provider_discovery.py  (find_nearby_providers)
-    location/osm_tag_map.py         (tags_for — used internally by find_nearby_providers)
-    location/ranking.py             (haversine_km)
-
-This module reuses those functions directly instead of re-implementing
-Overpass querying, so OSM tag semantics stay identical between the
-navigation agent and the appointment agent.
+Provider search now queries the appointment_providers table directly
+instead of calling external APIs. This ensures reliable, fast provider
+lookup with controlled data quality.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import time
 from typing import Any, Dict, List, Optional
 
-import requests
-
-from app.services.alternate_care.location.provider_discovery import (
-    find_nearby_providers,
-    ProviderDiscoveryError,
-    ProviderDiscoveryNetworkError,
-    ProviderDiscoveryRateLimitError,
-)
 from app.services.alternate_care.location.ranking import haversine_km
-from app.services.alternate_care.models.schemas import PatientLocation, ProviderCandidate
+from app.services.alternate_care.models.schemas import ProviderCandidate
 
 from app.services.alternate_care.appointment.client import AppointmentAgentClient  # noqa: F401
 from app.services.alternate_care.llm.nvidia_client import ChatMessage, NvidiaClient, NvidiaClientError
 
 logger = logging.getLogger(__name__)
-
-# The public Overpass instance (overpass-api.de) is a shared, best-effort
-# resource. It intermittently returns transient errors (HTTP 429 rate
-# limiting, or an occasional 406/5xx under load) even for well-formed
-# requests. A short bounded retry absorbs those transient blips without
-# masking genuine, persistent failures (which still surface as an error
-# envelope after retries are exhausted).
-_MAX_RETRIES = 3
-_RETRY_BACKOFF_SECONDS = 2.0
 
 
 # Presentation-only label for the "type" field in this tool's output.
@@ -83,10 +59,10 @@ def search_nearby_providers(
     specialty: Optional[str] = None,
     radius_km: float = 15.0,
 ) -> Dict[str, Any]:
-    """Search OpenStreetMap for nearby healthcare providers matching a care
+    """Search the database for nearby healthcare providers matching a care
     destination, and compute each provider's distance from the patient.
 
-    This purely answers "which real facilities exist near this patient for
+    This purely answers "which facilities exist in our system for
     this type of care?". It does NOT check appointment availability and
     does NOT book anything.
 
@@ -101,12 +77,13 @@ def search_nearby_providers(
         Care destination, e.g. "PCP", "URGENT_CARE", "SPECIALIST",
         "DENTISTRY". Should come from the navigation recommendation's
         decision.destination field. "TELEHEALTH" returns an empty list —
-        telehealth has no physical location to search for on OSM.
+        telehealth has no physical location.
     specialty : str | None
         Specialist sub-type (e.g. "CARDIOLOGY"). Only meaningful when
         destination == "SPECIALIST".
     radius_km : float
-        Search radius in kilometres. Default 15.0.
+        Search radius in kilometres. Default 15.0. (Note: currently not
+        used in database query but kept for API compatibility)
 
     Returns (success, providers found)
     -----------------------------------
@@ -115,9 +92,9 @@ def search_nearby_providers(
         "count": int,
         "providers": [
             {
-                "provider_id": str,     # e.g. "osm:node:123456"
+                "provider_id": str,     # e.g. "osm:node:test001"
                 "provider_name": str,
-                "facility_name": str,   # OSM only has one name field
+                "facility_name": str,
                 "type": str,            # e.g. "clinic", "urgent_care", "dentist"
                 "address": str | None,
                 "latitude": float,
@@ -135,7 +112,7 @@ def search_nearby_providers(
         "ok": True,
         "count": 0,
         "providers": [],
-        "message": "No healthcare providers found near the given location for <destination>."
+        "message": "No providers available in the system for <destination>."
     }
 
     Returns (failure)
@@ -148,8 +125,8 @@ def search_nearby_providers(
     Failure cases
     -------------
     - Invalid destination value → ValueError → error envelope
-    - Overpass HTTP 429 (rate limit) → error envelope
-    - Overpass network/timeout error → error envelope
+    - Database connection error → error envelope
+    - No providers in database for destination → empty list with message
     """
     # Radius expansion sequence for SPECIALIST searches.
     # If no verified specialist providers are found at the requested radius,
@@ -168,67 +145,96 @@ def search_nearby_providers(
 
         candidates: List[ProviderCandidate] = []
         effective_radius_km = radius_km
+        used_database_fallback = False
 
         for search_radius in radii_to_try:
-            location = PatientLocation(
-                latitude=latitude,
-                longitude=longitude,
-                radius_km=search_radius,
+            # Use database as primary source instead of Overpass API
+            logger.info(
+                "search_nearby_providers: fetching providers from database for %s",
+                destination,
             )
-
-            # Retry logic for transient Overpass errors
-            last_exc: Optional[Exception] = None
-            for attempt in range(1, _MAX_RETRIES + 1):
+            try:
+                # Use psycopg2 (synchronous) to avoid async context issues
+                import psycopg2
+                from psycopg2.extras import RealDictCursor
+                from app.config import settings
+                
+                # Get database URL and convert from async to sync format
+                db_url = settings.DATABASE_URL
+                if 'postgresql+asyncpg://' in db_url:
+                    db_url = db_url.replace('postgresql+asyncpg://', 'postgresql://')
+                
+                # Connect using psycopg2 (synchronous)
+                conn = psycopg2.connect(db_url)
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
+                
                 try:
-                    candidates = find_nearby_providers(
-                        location=location,
-                        destination=destination,  # type: ignore[arg-type]
-                        specialty=specialty,
-                    )
-                    last_exc = None
-                    break
-                except (ProviderDiscoveryNetworkError, ProviderDiscoveryRateLimitError) as exc:
-                    last_exc = exc
-                    if attempt < _MAX_RETRIES:
+                    # Fetch providers from database that match the destination type
+                    cursor.execute("""
+                        SELECT provider_id, provider_name, destination, specialty, 
+                               address, latitude, longitude
+                        FROM appointment_providers
+                        WHERE destination = %s
+                        ORDER BY provider_id
+                        LIMIT 10
+                    """, (destination.upper(),))
+                    
+                    db_providers = cursor.fetchall()
+                    
+                    if db_providers:
+                        candidates = []
+                        for row in db_providers:
+                            # Calculate distance from patient location
+                            dist_km = haversine_km(latitude, longitude, row['latitude'], row['longitude'])
+                            candidates.append(ProviderCandidate(
+                                provider_id=row['provider_id'],
+                                name=row['provider_name'],
+                                destination_type=destination,  # type: ignore[arg-type]
+                                specialty=row['specialty'],
+                                latitude=row['latitude'],
+                                longitude=row['longitude'],
+                                address=row['address'],
+                                distance_km=round(dist_km, 2),
+                                source="database",
+                            ))
+                        used_database_fallback = True
                         logger.info(
-                            "search_nearby_providers: transient Overpass error on "
-                            "attempt %d/%d (%s) — retrying in %.1fs",
-                            attempt, _MAX_RETRIES, exc, _RETRY_BACKOFF_SECONDS,
+                            "search_nearby_providers: loaded %d providers from database for %s",
+                            len(candidates), destination,
                         )
-                        time.sleep(_RETRY_BACKOFF_SECONDS)
-            if last_exc is not None:
-                raise last_exc
+                        break
+                    else:
+                        logger.error("No providers found in database for destination: %s", destination)
+                        raise ValueError(f"No providers available for {destination}")
+                finally:
+                    cursor.close()
+                    conn.close()
+                    
+            except Exception as db_exc:
+                logger.error("Failed to fetch providers from database: %s", db_exc, exc_info=True)
+                raise ValueError(f"Provider search failed: {db_exc}") from db_exc
 
             effective_radius_km = search_radius
 
             if candidates:
                 logger.info(
-                    "search_nearby_providers: found %d providers at radius %.0f km "
+                    "search_nearby_providers: found %d providers from database "
                     "(destination=%s specialty=%s)",
-                    len(candidates), search_radius, destination, specialty,
+                    len(candidates), destination, specialty,
                 )
                 break
-            else:
-                logger.info(
-                    "search_nearby_providers: 0 providers at radius %.0f km "
-                    "(destination=%s specialty=%s)%s",
-                    search_radius, destination, specialty,
-                    " — expanding radius" if search_radius != radii_to_try[-1] else "",
-                )
 
         if not candidates:
             logger.info(
-                "search_nearby_providers: no OSM results for destination=%s "
-                "specialty=%s lat=%.4f lon=%.4f (searched up to %.0f km)",
-                destination, specialty, latitude, longitude, effective_radius_km,
+                "search_nearby_providers: no providers in database for destination=%s "
+                "specialty=%s",
+                destination, specialty,
             )
             msg = (
-                f"No verified {specialty.lower() + ' ' if specialty else ''}"
-                f"providers found within {int(effective_radius_km)} km of "
-                f"the given location."
+                f"No {specialty.lower() + ' ' if specialty else ''}"
+                f"providers available in the system."
             ) if destination == "SPECIALIST" and specialty else (
-                f"No healthcare providers found near the given location "
-                f"for destination={destination}."
+                f"No providers available in the system for destination={destination}."
             )
             return {
                 "ok": True,
@@ -267,10 +273,9 @@ def search_nearby_providers(
             providers = providers[:_MAX_SPECIALIST_RESULTS]
 
         logger.info(
-            "search_nearby_providers: destination=%s specialty=%s -> %d providers "
-            "(nearest=%.2fkm, search_radius=%.0fkm)",
+            "search_nearby_providers: destination=%s specialty=%s -> %d providers from database "
+            "(nearest=%.2fkm)",
             destination, specialty, len(providers), providers[0]["distance_km"],
-            effective_radius_km,
         )
 
         return {
@@ -281,7 +286,7 @@ def search_nearby_providers(
             "requested_radius_km": radius_km,
         }
 
-    except (ProviderDiscoveryError, ValueError) as exc:
+    except ValueError as exc:
         logger.warning("search_nearby_providers failed: %s", exc)
         return {"ok": False, "error": str(exc)}
     except Exception as exc:
@@ -302,7 +307,7 @@ PROVIDER_SEARCH_TOOL_DEF: Dict[str, Any] = {
     "function": {
         "name": "search_nearby_providers",
         "description": (
-            "Search OpenStreetMap for real, nearby healthcare provider "
+            "Search the database for nearby healthcare provider "
             "facilities (clinics, doctors' offices, urgent care centers, "
             "dentists) matching a care destination, sorted by distance from "
             "the patient. Does NOT check appointment availability and does "

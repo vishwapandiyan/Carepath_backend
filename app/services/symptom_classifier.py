@@ -30,7 +30,7 @@ class SymptomClassifier:
         if settings.google_api_key:
             try:
                 genai.configure(api_key=settings.google_api_key)
-                self.model = genai.GenerativeModel('gemini-1.5-flash')
+                self.model = genai.GenerativeModel(settings.llm_model)
                 logger.info("Symptom classifier initialized with Gemini LLM")
             except Exception as e:
                 logger.warning(f"Failed to initialize Gemini: {e}, using keyword fallback only")

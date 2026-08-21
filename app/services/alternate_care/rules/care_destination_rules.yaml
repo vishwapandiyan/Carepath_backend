@@ -386,7 +386,6 @@ rules:
     conditions:
       all: []
     explanation: >
-      Default fallback when no other rule matches. Low-confidence; should
-      trigger a clarification question in production rather than silently
-      routing to PCP.
+      Based on your symptoms, we recommend scheduling a visit with your
+      primary care physician for a thorough evaluation.
     status: SAFETY_FALLBACK

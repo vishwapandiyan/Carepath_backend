@@ -15,7 +15,7 @@ class Settings(BaseSettings):
 
     # LLM — Google Gemini
     google_api_key: str = "your-google-api-key-here"
-    llm_model: str = "gemini-2.0-flash-exp"
+    llm_model: str = "gemini-flash-lite-latest"
     llm_provider: str = "gemini"
 
     # Safety rules file path (relative to project root)
