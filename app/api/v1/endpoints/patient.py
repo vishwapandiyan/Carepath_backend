@@ -213,7 +213,15 @@ async def get_patient_dashboard(
     """
     Patient dashboard endpoint.
     Only accessible by users with PATIENT role.
+    Returns the patient's MRN by looking up their EHR record via patient_id.
     """
+    # Resolve MRN from the EHR table using the user's patient_id.
+    mrn = None
+    if current_user.patient_id:
+        ehr = await ehr_crud_service.get_patient_by_patient_id(db, current_user.patient_id)
+        if ehr:
+            mrn = ehr.mrn
+
     return {
         "message": "Welcome to Patient Dashboard",
         "user": {
@@ -221,7 +229,8 @@ async def get_patient_dashboard(
             "role": current_user.role.value
         },
         "patient": {
-            "mrn": getattr(current_user, "patient", None).mrn if getattr(current_user, "patient", None) else None,
+            "mrn": mrn,
+            "patient_id": current_user.patient_id,
         },
     }
 
