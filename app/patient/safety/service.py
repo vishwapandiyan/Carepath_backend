@@ -160,6 +160,7 @@ async def run_safety_engine(session_id: str, db: AsyncSession) -> SafetyResult:
         )
 
     # ── Handoff to best_avoidable ML model when result is NO (CMS_ML) ──────────
+    pathway_res: Optional[PathwayResponse] = None
     if result_dict["result"] == "NO":
         try:
             intake_features = session.get("features") or {}
