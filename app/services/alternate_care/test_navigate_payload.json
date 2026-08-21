@@ -1,0 +1,14 @@
+{
+  "patient": {
+    "primary_symptom_category": "chest pain",
+    "cardiac_history_flag": 1,
+    "age": 55,
+    "gender": "male",
+    "has_pcp_flag": 0
+  },
+  "location": {
+    "latitude": 11.9416,
+    "longitude": 79.8083,
+    "radius_km": 15.0
+  }
+}

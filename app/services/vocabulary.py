@@ -73,3 +73,53 @@ REQUIRED_FIELD_ORDER: list[str] = [
     "pain_radiating",
     "symptom_trend",
 ]
+
+
+# ── Symptom Classification Integration ───────────────────────────────────────
+
+def enhance_intake_with_classification(intake_data: dict) -> dict:
+    """
+    Enhance intake data with symptom category classification
+    
+    Args:
+        intake_data: Dict with 'chief_complaint' and other intake fields
+    
+    Returns:
+        Enhanced intake_data with added fields:
+        - primary_symptom_category
+        - symptom_category_confidence
+        - symptom_category_method
+        - is_safety_category
+    """
+    from app.services.symptom_classifier import symptom_classifier
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    # Only classify if chief_complaint exists
+    if intake_data.get("chief_complaint"):
+        classification_result = symptom_classifier.classify_complaint(
+            chief_complaint=intake_data["chief_complaint"],
+            additional_context=None  # Could add patient history if available
+        )
+        
+        # Add classification fields
+        intake_data["primary_symptom_category"] = classification_result["category"]
+        intake_data["symptom_category_confidence"] = classification_result["confidence"]
+        intake_data["symptom_category_method"] = classification_result["method"]
+        intake_data["is_safety_category"] = classification_result["is_safety_category"]
+        
+        logger.info(
+            f"Classified complaint '{intake_data['chief_complaint'][:50]}...' "
+            f"→ category '{classification_result['category']}' "
+            f"(confidence: {classification_result['confidence']}, "
+            f"method: {classification_result['method']})"
+        )
+    else:
+        # No chief complaint - use default
+        intake_data["primary_symptom_category"] = "mild_general_symptom"
+        intake_data["symptom_category_confidence"] = "low"
+        intake_data["symptom_category_method"] = "default"
+        intake_data["is_safety_category"] = False
+    
+    return intake_data

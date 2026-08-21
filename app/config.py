@@ -15,10 +15,10 @@ class Settings(BaseSettings):
 
     # LLM — Google Gemini; swap SDK in llm_service.py to change provider
     google_api_key: str = "your-google-api-key-here"
-    llm_model: str = "gemini-3.6-flash"
+    llm_model: str = "gemini-2.5-flash"
 
     # Safety rules file path (relative to project root)
-    safety_rules_path: str = "app/rules/safety_rules.json"
+    safety_rules_path: str = "app/rules/safety_rules.json"  
 
     # JWT Security settings
     secret_key: str = "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7"

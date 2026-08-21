@@ -122,6 +122,14 @@ app.include_router(patient_router, prefix="/api/v1")
 # Care Manager endpoints mounted under /api/v1/care-manager
 app.include_router(care_manager_router, prefix="/api/v1/care-manager")
 
+# Alternate Care Agent endpoints mounted under /api/v1/care
+from app.services.alternate_care.api import routes as alternate_care_routes
+app.include_router(
+    alternate_care_routes.app,
+    prefix="/api/v1/care",
+    tags=["Alternate Care"]
+)
+
 
 @app.get("/health", tags=["health"], summary="Health check")
 async def health_check():
