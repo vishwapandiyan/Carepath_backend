@@ -46,7 +46,7 @@ class EDPredictionService:
         self.encoders = {}
         self.load_model()
     
-    def load_model(self):
+    def load_model(self, force_reload: bool = False):
         """
         Load the trained ED Avoidable model from pickle file.
         

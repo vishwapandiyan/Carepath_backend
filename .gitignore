@@ -33,3 +33,8 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs & Temp
+logs/
+*.log
+*.xls
