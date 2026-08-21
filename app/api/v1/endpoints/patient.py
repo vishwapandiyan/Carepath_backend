@@ -36,7 +36,7 @@ class EDPredictionRequest(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "patient_mrn": "MRN-2024-001234",
+                "patient_mrn": "MRN10000099",
                 "intake_data": {
                     "chief_complaint": "chest pain",
                     "symptom_onset": "2 hours ago",

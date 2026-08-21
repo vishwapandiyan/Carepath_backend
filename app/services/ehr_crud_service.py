@@ -188,10 +188,9 @@ class EHRCRUDService:
     
     @staticmethod
     async def get_patient_by_patient_id(db: AsyncSession, patient_id: str) -> Optional[PatientEHR]:
-        """Get patient EHR by patient_id (PAT_XXXXXXXX format)"""
-        stmt = select(PatientEHR).where(PatientEHR.patient_id == patient_id)
-        res = await db.execute(stmt)
-        return res.scalar_one_or_none()
+        """Get patient EHR dynamically by patient_id, MRN, username, or Name"""
+        from app.patient.safety.service import _get_ehr_for_patient
+        return await _get_ehr_for_patient(patient_id, db)
     
     @staticmethod
     async def get_patient_by_id(db: AsyncSession, patient_id: str | int, include_inactive: bool = False) -> Optional[PatientEHR]:
@@ -212,13 +211,9 @@ class EHRCRUDService:
     
     @staticmethod
     async def get_patient_by_mrn(db: AsyncSession, mrn: str) -> Optional[PatientEHR]:
-        """Get patient EHR by MRN"""
-        from sqlalchemy import or_
-        stmt = select(PatientEHR).where(
-            (PatientEHR.mrn == mrn) & or_(PatientEHR.is_active != 0, PatientEHR.is_active.is_(None))
-        )
-        res = await db.execute(stmt)
-        return res.scalar_one_or_none()
+        """Get patient EHR by MRN, username, patient_id, or Name"""
+        from app.patient.safety.service import _get_ehr_for_patient
+        return await _get_ehr_for_patient(mrn, db)
     
     @staticmethod
     async def get_all_patients(db: AsyncSession, skip: int = 0, limit: int = 100, include_inactive: bool = False) -> List[PatientEHR]:
