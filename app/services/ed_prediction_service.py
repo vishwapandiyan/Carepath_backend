@@ -89,17 +89,28 @@ class EDPredictionService:
             DataFrame with encoded categorical values
         """
         df_encoded = df.copy()
-        
+
         for col, encoder in self.encoders.items():
-            if col in df_encoded.columns:
-                try:
-                    # Transform using the encoder from training
-                    df_encoded[col] = encoder.transform(df_encoded[col].astype(str))
-                except ValueError:
-                    # Unknown category - use the most frequent class (first in classes_)
-                    logger.warning(f"Unknown category in {col}, using default: {encoder.classes_[0]}")
-                    df_encoded[col] = encoder.transform([encoder.classes_[0]])[0]
-        
+            if col not in df_encoded.columns:
+                continue
+
+            known = set(map(str, encoder.classes_))
+            default_code = int(encoder.transform([encoder.classes_[0]])[0])
+
+            def _encode_value(value, _col=col, _encoder=encoder, _known=known, _default=default_code):
+                s = str(value)
+                if s in _known:
+                    return int(_encoder.transform([s])[0])
+                # Unseen category → this silently distorts the model input, so make it loud.
+                logger.warning(
+                    "ED model categorical mismatch: feature '%s' got unseen value %r; "
+                    "expected one of %s. Falling back to '%s'.",
+                    _col, s, list(_encoder.classes_), _encoder.classes_[0],
+                )
+                return _default
+
+            df_encoded[col] = df_encoded[col].map(_encode_value)
+
         return df_encoded
     
     def predict(self, features: Dict) -> Dict:
