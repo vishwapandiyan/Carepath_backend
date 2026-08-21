@@ -160,19 +160,39 @@ async def run_safety_engine(session_id: str, db: AsyncSession) -> SafetyResult:
         )
 
     # ── Handoff to best_avoidable ML model when result is NO (CMS_ML) ──────────
-    pathway_res: Optional[PathwayResponse] = None
     if result_dict["result"] == "NO":
         try:
             intake_features = session.get("features") or {}
             ehr_data = await _get_ehr_for_patient(patient_id, db)
             
+            # Build clean all-False red flags dictionary when safety engine result is NO
+            clean_red_flags = {
+                "difficulty_breathing": False,
+                "chest_pain": False,
+                "altered_consciousness": False,
+                "severe_bleeding": False,
+                "stroke_symptoms": False,
+                "suicidal_ideation": False,
+                "anaphylaxis": False,
+                "high_fever": False,
+                "unable_to_walk": False,
+                "severe_abdominal_pain": False,
+                "vomiting_blood": False,
+                "severe_dehydration": False,
+            }
+            # Override only if explicitly provided in red_flags_raw
+            if red_flags_raw:
+                for k in clean_red_flags:
+                    if k in red_flags_raw:
+                        clean_red_flags[k] = bool(red_flags_raw[k])
+
             pathway_req = PathwayRequest(
                 patient_id=patient_id,
                 chief_complaint=intake_features.get("chief_complaint"),
                 symptom_onset=intake_features.get("symptom_onset"),
                 pain_scale=intake_features.get("pain_scale", 0),
                 location=intake_features.get("location"),
-                red_flag_answers=red_flags_raw,
+                red_flag_answers=clean_red_flags,
             )
             pathway_res = run_pathway(
                 patient_id=patient_id,
