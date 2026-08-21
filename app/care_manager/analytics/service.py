@@ -82,22 +82,23 @@ async def get_aggregate_analytics(db: AsyncSession) -> AggregateAnalyticsOut:
 async def get_patient_analytics(patient_id: str, db: AsyncSession) -> PatientAnalyticsOut:
     """
     Compute analytics scoped to a single patient.
+    Dynamically resolves patient by Username, MRN, Patient ID, or Name.
     """
-    query = select(PatientEHR).where(
-        (PatientEHR.patient_id == patient_id) | (PatientEHR.mrn == patient_id)
-    )
-    patient = (await db.execute(query)).scalars().first()
+    from app.patient.safety.service import _get_ehr_for_patient
+    patient = await _get_ehr_for_patient(patient_id, db)
 
-    if patient is None or not patient.is_active:
+    if patient is None or patient.is_active == 0:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Patient '{patient_id}' not found.",
         )
 
+    pid = patient.patient_id
+
     # Readmission prediction
     pred_stmt = (
         select(ReadmissionPrediction)
-        .where(ReadmissionPrediction.patient_id == patient.id)
+        .where(ReadmissionPrediction.patient_id == pid)
         .order_by(ReadmissionPrediction.predicted_at.desc())
         .limit(1)
     )
@@ -106,26 +107,26 @@ async def get_patient_analytics(patient_id: str, db: AsyncSession) -> PatientAna
     # Safety assessments
     triage_count = (
         await db.execute(
-            select(func.count(SafetyAssessment.id)).where(SafetyAssessment.patient_id == patient.id)
+            select(func.count(SafetyAssessment.id)).where(SafetyAssessment.patient_id == pid)
         )
     ).scalar() or 0
 
     emergency_triggers = (
         await db.execute(
             select(func.count(SafetyAssessment.id)).where(
-                (SafetyAssessment.patient_id == patient.id) & (SafetyAssessment.result == "YES")
+                (SafetyAssessment.patient_id == pid) & (SafetyAssessment.result == "YES")
             )
         )
     ).scalar() or 0
 
     # Post discharge
-    pd_stmt = select(PostDischargeStatus).where(PostDischargeStatus.patient_id == patient.id)
+    pd_stmt = select(PostDischargeStatus).where(PostDischargeStatus.patient_id == pid)
     pd_row = (await db.execute(pd_stmt)).scalars().first()
 
     care_plan_status = pd_row.care_plan.get("status") if pd_row and pd_row.care_plan else "not_started"
 
     return PatientAnalyticsOut(
-        patient_id=patient.id,
+        patient_id=pid,
         mrn=patient.mrn or "—",
         name=patient.name,
         readmission_risk_score=pred.risk_score if pred else None,
