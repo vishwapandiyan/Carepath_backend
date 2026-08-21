@@ -121,6 +121,17 @@ class RecommendationStore:
                 return None
             return item.patient_location
 
+    def update(self, recommendation_id: str, updates: Dict[str, Any]) -> None:
+        """Update an existing recommendation in the store."""
+        with self._lock:
+            if recommendation_id in self._items:
+                stored = self._items[recommendation_id].recommendation
+                if hasattr(stored, "model_copy"):
+                    updated_rec = stored.model_copy(update=updates)
+                else:
+                    updated_rec = stored.copy(update=updates)
+                self._items[recommendation_id].recommendation = updated_rec
+
     def get_provider(
         self,
         recommendation_id: str,
@@ -137,6 +148,22 @@ class RecommendationStore:
             if provider.provider_id == provider_id:
                 return provider
 
+        if recommendation.nearby_providers:
+            for p in recommendation.nearby_providers:
+                p_id = p.get("provider_id") or p.get("id")
+                if p_id == provider_id:
+                    return ProviderCandidate(
+                        provider_id=p_id,
+                        name=p.get("provider_name") or p.get("facility_name") or p.get("name") or "Healthcare Provider",
+                        destination_type=recommendation.decision.destination,
+                        specialty=recommendation.decision.specialty,
+                        latitude=float(p.get("latitude") or 0.0),
+                        longitude=float(p.get("longitude") or 0.0),
+                        address=p.get("address"),
+                        distance_km=p.get("distance_km"),
+                        source=p.get("source", "osm")
+                    )
+
         return None
 
     def require_provider(
@@ -146,11 +173,9 @@ class RecommendationStore:
     ) -> ProviderCandidate:
         """Validate recommendation existence and provider membership."""
 
-        recommendation = self.require(recommendation_id)
-
-        for provider in recommendation.top_providers:
-            if provider.provider_id == provider_id:
-                return provider
+        provider = self.get_provider(recommendation_id, provider_id)
+        if provider:
+            return provider
 
         raise KeyError(
             f"Provider '{provider_id}' is not part of recommendation "

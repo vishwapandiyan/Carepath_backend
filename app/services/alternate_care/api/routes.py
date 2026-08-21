@@ -278,6 +278,35 @@ async def navigate(
         if appt_result.get("ok"):
             appointment_agent_response = appt_result.get("response")
             nearby_providers = appt_result.get("providers")
+
+            # Convert nearby_providers list into ProviderCandidate schema objects for top_providers
+            top_prov_list: List[ProviderCandidate] = []
+            if nearby_providers:
+                for p in nearby_providers:
+                    try:
+                        top_prov_list.append(ProviderCandidate(
+                            provider_id=p.get("provider_id"),
+                            name=p.get("provider_name") or p.get("facility_name") or "Healthcare Provider",
+                            destination_type=decision.destination,
+                            specialty=decision.specialty,
+                            latitude=float(p.get("latitude") or 0.0),
+                            longitude=float(p.get("longitude") or 0.0),
+                            address=p.get("address"),
+                            distance_km=p.get("distance_km"),
+                            source=p.get("source", "osm")
+                        ))
+                    except Exception:
+                        pass
+
+            recommendation_store.update(
+                recommendation_id,
+                {
+                    "nearby_providers": nearby_providers,
+                    "top_providers": top_prov_list,
+                    "appointment_agent_response": appointment_agent_response,
+                }
+            )
+
             logger.info(
                 "navigate: Appointment Agent completed (providers=%d)",
                 len(nearby_providers) if nearby_providers else 0,
