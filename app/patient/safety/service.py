@@ -57,37 +57,29 @@ def _get_session_or_404(session_id: str) -> dict:
 
 
 async def _get_ehr_for_patient(patient_id: str, db: AsyncSession) -> Optional[PatientEHR]:
-    if not patient_id or not str(patient_id).strip():
+    if not patient_id:
         return None
 
     clean_id = str(patient_id).strip()
-    candidate_ids = {clean_id}
-
-    # 1. Search User table by username or patient_id (case-insensitive)
+    target_ids = {clean_id}
     try:
         user_res = await db.execute(
-            select(User).where(
-                or_(
-                    User.username.ilike(clean_id),
-                    User.patient_id.ilike(clean_id)
-                )
-            )
+            select(User).where(or_(User.username.ilike(clean_id), User.patient_id.ilike(clean_id)))
         )
         users = user_res.scalars().all()
         for u in users:
             if u.patient_id:
-                candidate_ids.add(u.patient_id)
+                target_ids.add(u.patient_id)
             if u.username:
-                candidate_ids.add(u.username)
+                target_ids.add(u.username)
     except Exception as err:
         logger.warning("Could not query User model during EHR resolution: %s", err)
 
     cleaned_name = clean_id.replace("_", " ").replace("-", " ")
 
-    # 2. Search PatientEHR table by candidate IDs, MRN, or Name
     conds = [
-        PatientEHR.patient_id.in_(list(candidate_ids)),
-        PatientEHR.mrn.in_(list(candidate_ids)),
+        PatientEHR.patient_id.in_(list(target_ids)),
+        PatientEHR.mrn.in_(list(target_ids)),
         PatientEHR.name.ilike(f"%{clean_id}%"),
         PatientEHR.name.ilike(f"%{cleaned_name}%"),
     ]
@@ -95,8 +87,6 @@ async def _get_ehr_for_patient(patient_id: str, db: AsyncSession) -> Optional[Pa
         conds.append(PatientEHR.id == int(clean_id))
 
     query = select(PatientEHR).where(or_(*conds))
-    result = await db.execute(query)
-    return result.scalars().first()
     result = await db.execute(query)
     return result.scalars().first()
 

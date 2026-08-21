@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query, Body
 
 from app.patient.safety import schemas, service
+from app.patient.safety.smart_red_flags import filter_red_flags_with_llm, RedFlagFilterResult
 from app.core.security import get_current_patient
 from app.db.base import get_db
 from app.models.user import User
@@ -59,3 +60,29 @@ async def get_assessment(
     current_user: User = Depends(get_current_patient),
 ) -> schemas.SafetyResult:
     return await service.get_latest_assessment(session_id, db)
+
+
+@router.post(
+    "/sessions/{session_id}/smart-filter",
+    response_model=RedFlagFilterResult,
+    summary="Get smart filtered red flag questions (LLM-powered)",
+    description=(
+        "Use LLM with constraint-based prompting to intelligently determine which "
+        "2-5 red flag questions are most relevant based on the patient's symptoms. "
+        "This replaces showing all 10 questions with a targeted subset."
+    ),
+)
+async def get_smart_red_flags(
+    session_id: str,
+    chief_complaint: str = Query(..., description="Main symptom or complaint"),
+    extracted_features: dict = Body(default={}),
+    current_user: User = Depends(get_current_patient),
+) -> RedFlagFilterResult:
+    """
+    Analyze patient symptoms and return only relevant red flag questions.
+    
+    Example:
+        - "leg pain" → Returns 2 questions about mobility and bleeding
+        - "chest pain" → Returns 5 questions about cardiac/respiratory issues
+    """
+    return filter_red_flags_with_llm(chief_complaint, extracted_features or {})
