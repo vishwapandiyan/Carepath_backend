@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from pydantic import BaseModel, Field
 from typing import Dict, Optional, List
 import logging
@@ -119,17 +119,22 @@ async def predict_ed_avoidable(
         
         if request.patient_mrn:
             try:
-                # Query EHR database
-                result = await db.execute(
-                    select(PatientEHR).where(PatientEHR.mrn == request.patient_mrn)
+                # Query EHR database by MRN, patient_id, or patient name
+                query = select(PatientEHR).where(
+                    or_(
+                        PatientEHR.mrn == request.patient_mrn,
+                        PatientEHR.patient_id == request.patient_mrn,
+                        PatientEHR.name.ilike(f"%{request.patient_mrn}%")
+                    )
                 )
-                ehr_data = result.scalar_one_or_none()
+                result = await db.execute(query)
+                ehr_data = result.scalars().first()
                 
                 if ehr_data:
                     used_ehr = True
-                    logger.info(f"Found EHR data for MRN: {request.patient_mrn}")
+                    logger.info(f"Found EHR data for patient '{request.patient_mrn}' (MRN: {ehr_data.mrn}, Name: {ehr_data.name})")
                 else:
-                    logger.warning(f"No EHR data found for MRN: {request.patient_mrn}, using defaults")
+                    logger.warning(f"No EHR data found for patient identifier '{request.patient_mrn}', using defaults")
                     
             except Exception as e:
                 logger.warning(f"Failed to fetch EHR data: {e}, using defaults")

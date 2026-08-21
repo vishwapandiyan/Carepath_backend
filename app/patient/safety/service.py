@@ -56,9 +56,12 @@ def _get_session_or_404(session_id: str) -> dict:
 
 
 async def _get_ehr_for_patient(patient_id: str, db: AsyncSession) -> Optional[PatientEHR]:
+    if not patient_id:
+        return None
     conds = [
         PatientEHR.patient_id == patient_id,
         PatientEHR.mrn == patient_id,
+        PatientEHR.name.ilike(f"%{patient_id}%"),
     ]
     if patient_id.isdigit():
         conds.append(PatientEHR.id == int(patient_id))

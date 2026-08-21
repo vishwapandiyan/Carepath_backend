@@ -189,7 +189,7 @@ def submit_red_flags_and_evaluate():
 
 
 def trigger_pathway_scoring():
-    pid = st.session_state.patient_id or "PAT-001"
+    pid = st.session_state.patient_id or "PAT_HEALTHY_001"
     intake = st.session_state.intake_features or {}
     flags = st.session_state.red_flags or {}
 
@@ -228,13 +228,16 @@ if st.session_state.phase == "start":
         "**immediate emergency care** or can be routed to further assessment."
     )
     st.divider()
-    patient_id = st.text_input("Enter your Patient ID to begin", placeholder="e.g. PAT-001")
+    patient_id = st.text_input(
+        "Enter Patient ID, MRN, or Patient Name to begin",
+        placeholder="e.g. Healthy Patient, PAT_HEALTHY_001, or MRN10000099"
+    )
     if st.button("Start Triage →", type="primary", use_container_width=True):
         if patient_id.strip():
             start_session(patient_id.strip())
             st.rerun()
         else:
-            st.warning("Please enter a patient ID.")
+            st.warning("Please enter a Patient ID, MRN, or Name.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -436,7 +439,7 @@ elif st.session_state.phase == "verdict":
         st.info("💡 **Can I check your Emergency Risk Score & Care Plan?**\n\nOur ML model will analyze your MRN record, extracted symptoms, and red-flag screening answers.")
         col_mrn, col_btn = st.columns([2, 1])
         with col_mrn:
-            mrn_val = st.text_input("Patient MRN / ID", value=st.session_state.patient_id or "PAT-001", key="input_mrn")
+            mrn_val = st.text_input("Patient MRN, ID, or Name", value=st.session_state.patient_id or "PAT_HEALTHY_001", key="input_mrn")
         with col_btn:
             st.write("")
             st.write("")
