@@ -109,7 +109,7 @@ async def handle_message(session_id: str, payload: MessageIn) -> MessageResponse
     is_already_complete = session.get("status") == "COMPLETE"
     new_status = "COMPLETE" if (next_q is None or is_already_complete) else "IN_PROGRESS"
 
-    # Build combined assistant response: answer user query if present + prompt next missing field
+    # Build combined assistant response
     query_answer = extraction.user_query_answer.strip() if extraction.user_query_answer else None
     if query_answer and next_q and not is_already_complete:
         assistant_msg = f"{query_answer}\n\n{next_q}"
@@ -118,9 +118,10 @@ async def handle_message(session_id: str, payload: MessageIn) -> MessageResponse
     elif next_q and not is_already_complete:
         assistant_msg = next_q
     elif is_already_complete:
-        assistant_msg = "I have noted that. Please let me know if you have any other questions."
+        assistant_msg = "Thank you. All intake information has been recorded. Please proceed to the safety screening checklist to complete your evaluation."
     else:
-        assistant_msg = None
+        # All required intake fields collected for the first time
+        assistant_msg = "Thank you! All symptom intake questions have been collected. Please proceed to the safety screening checklist to view your care evaluation."
 
     session_store.update_session(
         session_id,

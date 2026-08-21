@@ -1,14 +1,7 @@
 """
 Readmission Feature Mapper Service
 
-Maps EHR data to the 25 features required by the readmission prediction model.
-
-Model Features:
-- 20 numerical features (age, comorbidities, labs, utilization, admission data, medications)
-- 5 categorical features (insurance_type, admission_type, discharge_destination) - one-hot encoded
-
-Author: CarePath AI Team
-Date: 2026-08-20
+Maps EHR data to the 30 features required by the readmission prediction sklearn Pipeline.
 """
 
 import logging
@@ -21,39 +14,41 @@ logger = logging.getLogger(__name__)
 
 class ReadmissionFeatureMapper:
     """
-    Maps patient EHR data to features required by the readmission prediction model.
-    Handles missing values and one-hot encoding for categorical variables.
+    Maps patient EHR data to features required by the readmission prediction model pipeline.
+    Handles missing values and provides raw columns expected by sklearn Pipeline.
     """
     
-    # Expected 25 features for the model
     EXPECTED_FEATURES = [
-        # Numerical features (20)
-        'num__age',
-        'num__comorbidity_index',
-        'num__diabetes_flag',
-        'num__heart_failure_flag',
-        'num__copd_flag',
-        'num__ckd_flag',
-        'num__dementia_flag',
-        'num__previous_admissions_12m',
-        'num__previous_er_visits_12m',
-        'num__prior_30_day_readmission_flag',
-        'num__length_of_stay_days',
-        'num__icu_stay_flag',
-        'num__medication_count_at_discharge',
-        'num__polypharmacy_flag',
-        'num__high_risk_medication_flag',
-        'num__hemoglobin',
-        'num__creatinine',
-        'num__glucose',
-        'num__follow_up_within_7_days_flag',
-        'num__total_charges_index_stay',
-        # Categorical features (5) - one-hot encoded
-        'cat__insurance_type_Medicare',
-        'cat__insurance_type_Private',
-        'cat__admission_type_emergency',
-        'cat__discharge_destination_nursing_home',
-        'cat__discharge_destination_rehab',
+        'age',
+        'sex',
+        'bmi',
+        'insurance_type',
+        'admission_type',
+        'discharge_destination',
+        'comorbidity_index',
+        'diabetes_flag',
+        'heart_failure_flag',
+        'copd_flag',
+        'ckd_flag',
+        'cancer_flag',
+        'dementia_flag',
+        'previous_admissions_12m',
+        'previous_er_visits_12m',
+        'prior_30_day_readmission_flag',
+        'length_of_stay_days',
+        'icu_stay_flag',
+        'medication_count_at_discharge',
+        'polypharmacy_flag',
+        'high_risk_medication_flag',
+        'hemoglobin',
+        'creatinine',
+        'glucose',
+        'hba1c',
+        'wbc_count',
+        'total_bilirubin',
+        'follow_up_within_7_days_flag',
+        'total_charges_index_stay',
+        'drg_code',
     ]
     
     def map_ehr_to_features(self, ehr: PatientEHR) -> pd.DataFrame:
@@ -64,115 +59,60 @@ class ReadmissionFeatureMapper:
             ehr: PatientEHR database model instance
             
         Returns:
-            pd.DataFrame: Single row DataFrame with 25 features in correct order
+            pd.DataFrame: Single row DataFrame with 30 features in correct order
         """
         try:
-            # Extract numerical features
+            # Map gender string to numeric (1 for male, 0 for female/other)
+            gender_lower = str(ehr.gender).lower() if ehr.gender else ""
+            sex_numeric = 1 if gender_lower in ["male", "m", "1"] else 0
+
             features = {
-                'num__age': ehr.age,
-                'num__comorbidity_index': ehr.charlson_comorbidity_index,
-                'num__diabetes_flag': ehr.diabetes_flag,
-                'num__heart_failure_flag': ehr.heart_failure_flag,
-                'num__copd_flag': ehr.copd_asthma_flag,  # Using combined COPD/Asthma flag
-                'num__ckd_flag': ehr.ckd_flag,
-                'num__dementia_flag': ehr.dementia_flag,
-                'num__previous_admissions_12m': ehr.previous_admissions_12m,
-                'num__previous_er_visits_12m': ehr.previous_er_visits_12m,
-                'num__prior_30_day_readmission_flag': ehr.prior_30_day_readmission_flag,
-                'num__length_of_stay_days': self._handle_missing(ehr.length_of_stay_days, default=0),
-                'num__icu_stay_flag': ehr.icu_stay_flag,
-                'num__medication_count_at_discharge': self._handle_missing(ehr.medication_count_at_discharge, default=0),
-                'num__polypharmacy_flag': ehr.polypharmacy_flag,
-                'num__high_risk_medication_flag': ehr.high_risk_medication_flag,
-                'num__hemoglobin': ehr.hemoglobin,
-                'num__creatinine': ehr.creatinine,
-                'num__glucose': ehr.glucose,
-                'num__follow_up_within_7_days_flag': ehr.follow_up_within_7_days_flag,
-                'num__total_charges_index_stay': self._handle_missing(ehr.total_charges_index_stay, default=0.0),
+                'age': ehr.age if ehr.age is not None else 50,
+                'sex': sex_numeric,
+                'bmi': ehr.bmi if ehr.bmi is not None else 25.0,
+                'insurance_type': ehr.insurance_type if ehr.insurance_type else "Medicare",
+                'admission_type': ehr.admission_type if ehr.admission_type else "elective",
+                'discharge_destination': ehr.discharge_destination if ehr.discharge_destination else "home",
+                'comorbidity_index': ehr.charlson_comorbidity_index if ehr.charlson_comorbidity_index is not None else 0,
+                'diabetes_flag': ehr.diabetes_flag if ehr.diabetes_flag is not None else 0,
+                'heart_failure_flag': ehr.heart_failure_flag if ehr.heart_failure_flag is not None else 0,
+                'copd_flag': ehr.copd_asthma_flag if ehr.copd_asthma_flag is not None else 0,
+                'ckd_flag': ehr.ckd_flag if ehr.ckd_flag is not None else 0,
+                'cancer_flag': ehr.cancer_flag if ehr.cancer_flag is not None else 0,
+                'dementia_flag': ehr.dementia_flag if ehr.dementia_flag is not None else 0,
+                'previous_admissions_12m': ehr.previous_admissions_12m if ehr.previous_admissions_12m is not None else 0,
+                'previous_er_visits_12m': ehr.previous_er_visits_12m if ehr.previous_er_visits_12m is not None else 0,
+                'prior_30_day_readmission_flag': ehr.prior_30_day_readmission_flag if ehr.prior_30_day_readmission_flag is not None else 0,
+                'length_of_stay_days': ehr.length_of_stay_days if ehr.length_of_stay_days is not None else 3,
+                'icu_stay_flag': ehr.icu_stay_flag if ehr.icu_stay_flag is not None else 0,
+                'medication_count_at_discharge': ehr.medication_count_at_discharge if ehr.medication_count_at_discharge is not None else 5,
+                'polypharmacy_flag': ehr.polypharmacy_flag if ehr.polypharmacy_flag is not None else 0,
+                'high_risk_medication_flag': ehr.high_risk_medication_flag if ehr.high_risk_medication_flag is not None else 0,
+                'hemoglobin': ehr.hemoglobin if ehr.hemoglobin is not None else 13.5,
+                'creatinine': ehr.creatinine if ehr.creatinine is not None else 1.0,
+                'glucose': ehr.glucose if ehr.glucose is not None else 110,
+                'hba1c': ehr.hba1c if ehr.hba1c is not None else 6.5,
+                'wbc_count': ehr.wbc_count if ehr.wbc_count is not None else 7.5,
+                'total_bilirubin': ehr.total_bilirubin if ehr.total_bilirubin is not None else 0.8,
+                'follow_up_within_7_days_flag': ehr.follow_up_within_7_days_flag if ehr.follow_up_within_7_days_flag is not None else 1,
+                'total_charges_index_stay': ehr.total_charges_index_stay if ehr.total_charges_index_stay is not None else 15000.0,
+                'drg_code': 0,
             }
             
-            # One-hot encode categorical variables
-            categorical_features = self._encode_categorical_features(
-                insurance_type=ehr.insurance_type,
-                admission_type=ehr.admission_type,
-                discharge_destination=ehr.discharge_destination
-            )
-            
-            # Combine all features
-            features.update(categorical_features)
-            
-            # Create DataFrame with features in the correct order
             df = pd.DataFrame([features], columns=self.EXPECTED_FEATURES)
-            
-            logger.info(f"Mapped EHR data for patient {ehr.patient_id} to {len(self.EXPECTED_FEATURES)} features")
-            
+            logger.info(f"Mapped EHR data for patient {ehr.patient_id} to 30 features")
             return df
             
         except Exception as e:
             logger.error(f"Error mapping EHR to features for patient {ehr.patient_id}: {str(e)}")
             raise
-    
-    def _handle_missing(self, value: Optional[Any], default: Any) -> Any:
-        """Handle missing values by returning default."""
-        return value if value is not None else default
-    
-    def _encode_categorical_features(
-        self,
-        insurance_type: Optional[str],
-        admission_type: Optional[str],
-        discharge_destination: Optional[str]
-    ) -> Dict[str, int]:
-        """
-        One-hot encode categorical features.
-        
-        Model expects these specific dummy columns:
-        - insurance_type: Medicare, Private
-        - admission_type: emergency
-        - discharge_destination: nursing_home, rehab
-        
-        Args:
-            insurance_type: Insurance type (Medicare, Medicaid, Private, etc.)
-            admission_type: Admission type (elective, emergency, urgent)
-            discharge_destination: Discharge destination (home, rehab, nursing_home, other)
-            
-        Returns:
-            Dict with one-hot encoded features
-        """
-        # Insurance type encoding
-        insurance_medicare = 1 if insurance_type == "Medicare" else 0
-        insurance_private = 1 if insurance_type == "Private" else 0
-        
-        # Admission type encoding
-        admission_emergency = 1 if admission_type == "emergency" else 0
-        
-        # Discharge destination encoding
-        discharge_nursing_home = 1 if discharge_destination == "nursing_home" else 0
-        discharge_rehab = 1 if discharge_destination == "rehab" else 0
-        
-        return {
-            'cat__insurance_type_Medicare': insurance_medicare,
-            'cat__insurance_type_Private': insurance_private,
-            'cat__admission_type_emergency': admission_emergency,
-            'cat__discharge_destination_nursing_home': discharge_nursing_home,
-            'cat__discharge_destination_rehab': discharge_rehab,
-        }
-    
+
     def validate_features(self, features_df: pd.DataFrame) -> bool:
-        """
-        Validate that all required features are present.
-        
-        Args:
-            features_df: DataFrame with mapped features
-            
-        Returns:
-            True if all features are present, False otherwise
-        """
+        """Validate that all required features are present."""
         missing_features = set(self.EXPECTED_FEATURES) - set(features_df.columns)
-        
         if missing_features:
             logger.error(f"Missing features: {missing_features}")
             return False
-        
         return True
 
 

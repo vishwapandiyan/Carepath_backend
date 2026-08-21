@@ -1,7 +1,8 @@
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
+from app.patient.pathway.schemas import PathwayResponse
 
 
 # ── Request schemas ───────────────────────────────────────────────────────────
@@ -101,3 +102,7 @@ class SafetyResult(BaseModel):
     )
     error_detail: str | None = None
     evaluated_at: datetime
+    pathway: Optional[PathwayResponse] = Field(
+        None,
+        description="ML Avoidable ED prediction result (attached when result=NO / CMS_ML).",
+    )

@@ -35,6 +35,7 @@ async def create_patient(
 async def list_patients(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=500, description="Maximum number of records to return"),
+    include_inactive: bool = Query(False, description="Whether to include soft-deleted patients"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_care_manager)
 ):
@@ -43,25 +44,25 @@ async def list_patients(
     Only accessible by Care Managers.
     Supports pagination.
     """
-    patients = await ehr_crud_service.get_all_patients(db, skip=skip, limit=limit)
+    patients = await ehr_crud_service.get_all_patients(db, skip=skip, limit=limit, include_inactive=include_inactive)
     return patients
 
 
 @router.get("/patients/{patient_id}", response_model=PatientEHRResponse)
 async def get_patient(
-    patient_id: int,
+    patient_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_care_manager)
 ):
     """
-    Get patient EHR record by ID.
+    Get patient EHR record by ID (supports integer ID, PAT_XXXXXXXX, or MRN).
     Only accessible by Care Managers.
     """
     patient = await ehr_crud_service.get_patient_by_id(db, patient_id)
     if not patient:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Patient with ID {patient_id} not found"
+            detail=f"Patient with ID/MRN '{patient_id}' not found"
         )
     return patient
 
@@ -80,14 +81,14 @@ async def get_patient_by_mrn(
     if not patient:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Patient with MRN {mrn} not found"
+            detail=f"Patient with MRN '{mrn}' not found"
         )
     return patient
 
 
 @router.put("/patients/{patient_id}", response_model=PatientEHRResponse)
 async def update_patient(
-    patient_id: int,
+    patient_id: str,
     ehr_update: PatientEHRUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_care_manager)
@@ -97,18 +98,19 @@ async def update_patient(
     Only accessible by Care Managers.
     All fields are optional - only provided fields will be updated.
     """
-    patient = await ehr_crud_service.update_patient_ehr(db, patient_id, ehr_update)
+    patient = await ehr_crud_service.get_patient_by_id(db, patient_id)
     if not patient:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Patient with ID {patient_id} not found"
+            detail=f"Patient with ID/MRN '{patient_id}' not found"
         )
-    return patient
+    updated = await ehr_crud_service.update_patient_ehr(db, patient.id, ehr_update)
+    return updated
 
 
 @router.delete("/patients/{patient_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_patient(
-    patient_id: int,
+    patient_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_care_manager)
 ):
@@ -116,10 +118,16 @@ async def delete_patient(
     Delete patient EHR record.
     Only accessible by Care Managers.
     """
-    success = await ehr_crud_service.delete_patient_ehr(db, patient_id)
+    patient = await ehr_crud_service.get_patient_by_id(db, patient_id)
+    if not patient:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Patient with ID/MRN '{patient_id}' not found"
+        )
+    success = await ehr_crud_service.delete_patient_ehr(db, patient.id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Patient with ID {patient_id} not found"
+            detail=f"Patient with ID '{patient_id}' not found"
         )
     return None

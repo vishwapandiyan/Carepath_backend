@@ -3,6 +3,23 @@
 -- Auto-generated schema documentation
 
 -- ============================================
+-- PATIENT MANAGEMENT (LEGACY)
+-- ============================================
+
+-- Patients Table: Basic patient records (legacy, minimal data)
+CREATE TABLE IF NOT EXISTS patients (
+    id SERIAL PRIMARY KEY,
+    mrn VARCHAR(50) UNIQUE NOT NULL,
+    first_name VARCHAR(255) NOT NULL,
+    last_name VARCHAR(255) NOT NULL,
+    date_of_birth VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_patients_mrn ON patients(mrn);
+
+-- ============================================
 -- AUTHENTICATION & USER MANAGEMENT
 -- ============================================
 
@@ -12,7 +29,7 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     role VARCHAR(50) NOT NULL CHECK (role IN ('PATIENT', 'CARE_MANAGER')),
-    patient_id INTEGER,
+    patient_id VARCHAR(50),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

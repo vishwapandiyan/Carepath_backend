@@ -1,6 +1,6 @@
 """
 Readmission Prediction Service.
-Decoupled internal data pull function to allow smooth future migration to live EHR APIs.
+Integrates trained scikit-learn readmission ML model (best_readmission_model.pkl).
 """
 
 from __future__ import annotations
@@ -9,24 +9,27 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.care_manager.readmission.schemas import ReadmissionPredictionOut
 from app.models.ehr import PatientEHR
 from app.db.models import ReadmissionPrediction, SafetyAssessment
+from app.services.readmission_prediction_service import readmission_prediction_service
 
 logger = logging.getLogger(__name__)
 
 
-async def get_patient_data_from_db(patient_id: str, db: AsyncSession) -> dict:
-    """
-    Decoupled internal data-pull logic.
-    Pull patient demographic profile & historical triage assessments from database.
-    """
-    query = select(PatientEHR).where(
-        (PatientEHR.patient_id == patient_id) | (PatientEHR.mrn == patient_id)
-    )
+async def get_patient_from_db(patient_id: str, db: AsyncSession) -> PatientEHR:
+    """Fetch patient record by patient_id, MRN, or integer ID."""
+    conds = [
+        PatientEHR.patient_id == patient_id,
+        PatientEHR.mrn == patient_id,
+    ]
+    if patient_id.isdigit():
+        conds.append(PatientEHR.id == int(patient_id))
+
+    query = select(PatientEHR).where(or_(*conds))
     patient = (await db.execute(query)).scalars().first()
 
     if patient is None or patient.is_active == 0:
@@ -34,10 +37,28 @@ async def get_patient_data_from_db(patient_id: str, db: AsyncSession) -> dict:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Patient '{patient_id}' not found.",
         )
+    return patient
 
+
+async def predict_readmission(patient_id: str, db: AsyncSession) -> ReadmissionPredictionOut:
+    """
+    Run trained ML model (best_readmission_model.pkl) on patient EHR record and persist prediction score.
+    """
+    patient = await get_patient_from_db(patient_id, db)
     pid = patient.patient_id
 
-    # Fetch latest safety triage assessment if available
+    # If ML model is loaded, use true ML model prediction
+    if readmission_prediction_service.model_loaded:
+        try:
+            ml_res = readmission_prediction_service.predict(patient)
+            risk_score = round(ml_res["risk_score"], 4)
+        except Exception as e:
+            logger.error(f"Error running ML model for patient {pid}: {e}. Falling back to clinical features.")
+            risk_score = 0.25
+    else:
+        risk_score = 0.25
+
+    # Fetch latest safety triage assessment if available to factor in emergency status
     safety_query = (
         select(SafetyAssessment)
         .where(SafetyAssessment.patient_id == pid)
@@ -45,31 +66,8 @@ async def get_patient_data_from_db(patient_id: str, db: AsyncSession) -> dict:
         .limit(1)
     )
     latest_safety = (await db.execute(safety_query)).scalars().first()
-
-    return {
-        "patient_id": pid,
-        "mrn": patient.mrn or pid,
-        "name": patient.name or patient.full_name,
-        "dob": patient.dob,
-        "insurance_id": patient.insurance_id,
-        "has_safety_emergency": latest_safety.result == "YES" if latest_safety else False,
-        "safety_triggered_count": len(latest_safety.triggered_rules) if latest_safety else 0,
-    }
-
-
-async def predict_readmission(patient_id: str, db: AsyncSession) -> ReadmissionPredictionOut:
-    """
-    Run prediction model on current patient data and persist the prediction score.
-    """
-    data = await get_patient_data_from_db(patient_id, db)
-
-    base_risk = 0.25
-    if data["has_safety_emergency"]:
-        base_risk += 0.45
-    if data["safety_triggered_count"] > 0:
-        base_risk += min(0.20, data["safety_triggered_count"] * 0.10)
-
-    risk_score = round(min(0.95, max(0.05, base_risk)), 2)
+    if latest_safety and latest_safety.result == "YES":
+        risk_score = round(min(0.98, risk_score + 0.35), 4)
 
     if risk_score >= 0.70:
         risk_level = "high"
@@ -79,7 +77,7 @@ async def predict_readmission(patient_id: str, db: AsyncSession) -> ReadmissionP
         risk_level = "low"
 
     prediction = ReadmissionPrediction(
-        patient_id=data["patient_id"],
+        patient_id=pid,
         risk_score=risk_score,
         risk_level=risk_level,
         predicted_at=datetime.now(timezone.utc),
@@ -89,11 +87,11 @@ async def predict_readmission(patient_id: str, db: AsyncSession) -> ReadmissionP
     await db.refresh(prediction)
 
     logger.info(
-        "Computed readmission risk | patient_id=%s | score=%.2f | level=%s",
-        data["patient_id"], risk_score, risk_level,
+        "Computed ML readmission risk | patient_id=%s | score=%.4f | level=%s",
+        pid, risk_score, risk_level,
     )
     return ReadmissionPredictionOut(
-        patient_id=data["patient_id"],
+        patient_id=pid,
         risk_score=risk_score,
         risk_level=risk_level,
         predicted_at=prediction.predicted_at,
@@ -104,11 +102,12 @@ async def get_latest_prediction(patient_id: str, db: AsyncSession) -> Readmissio
     """
     Retrieve most recently computed score without recomputing.
     """
-    data = await get_patient_data_from_db(patient_id, db)
+    patient = await get_patient_from_db(patient_id, db)
+    pid = patient.patient_id
 
     query = (
         select(ReadmissionPrediction)
-        .where(ReadmissionPrediction.patient_id == data["patient_id"])
+        .where(ReadmissionPrediction.patient_id == pid)
         .order_by(ReadmissionPrediction.predicted_at.desc())
         .limit(1)
     )

@@ -194,23 +194,40 @@ class EHRCRUDService:
         return res.scalar_one_or_none()
     
     @staticmethod
-    async def get_patient_by_id(db: AsyncSession, patient_id: int) -> Optional[PatientEHR]:
-        """Get patient EHR by ID"""
-        stmt = select(PatientEHR).where(PatientEHR.id == patient_id)
+    async def get_patient_by_id(db: AsyncSession, patient_id: str | int, include_inactive: bool = False) -> Optional[PatientEHR]:
+        """Get patient EHR by ID (int), patient_id (PAT_XXXXXXXX), or MRN"""
+        from sqlalchemy import or_
+        target_str = str(patient_id)
+        conds = [
+            PatientEHR.patient_id == target_str,
+            PatientEHR.mrn == target_str,
+        ]
+        if target_str.isdigit():
+            conds.append(PatientEHR.id == int(target_str))
+        stmt = select(PatientEHR).where(or_(*conds))
+        if not include_inactive:
+            stmt = stmt.where(or_(PatientEHR.is_active != 0, PatientEHR.is_active.is_(None)))
         res = await db.execute(stmt)
-        return res.scalar_one_or_none()
+        return res.scalars().first()
     
     @staticmethod
     async def get_patient_by_mrn(db: AsyncSession, mrn: str) -> Optional[PatientEHR]:
         """Get patient EHR by MRN"""
-        stmt = select(PatientEHR).where(PatientEHR.mrn == mrn)
+        from sqlalchemy import or_
+        stmt = select(PatientEHR).where(
+            (PatientEHR.mrn == mrn) & or_(PatientEHR.is_active != 0, PatientEHR.is_active.is_(None))
+        )
         res = await db.execute(stmt)
         return res.scalar_one_or_none()
     
     @staticmethod
-    async def get_all_patients(db: AsyncSession, skip: int = 0, limit: int = 100) -> List[PatientEHR]:
-        """Get all patient EHR records with pagination"""
-        stmt = select(PatientEHR).offset(skip).limit(limit)
+    async def get_all_patients(db: AsyncSession, skip: int = 0, limit: int = 100, include_inactive: bool = False) -> List[PatientEHR]:
+        """Get all patient EHR records with pagination, filtering out soft-deleted records by default"""
+        from sqlalchemy import or_
+        stmt = select(PatientEHR)
+        if not include_inactive:
+            stmt = stmt.where(or_(PatientEHR.is_active != 0, PatientEHR.is_active.is_(None)))
+        stmt = stmt.offset(skip).limit(limit)
         res = await db.execute(stmt)
         return list(res.scalars().all())
     

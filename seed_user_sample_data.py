@@ -1,13 +1,18 @@
 """
-Seed user provided 5 sample patient EHR records into PostgreSQL ehr_db
+Seed 5 sample patient EHR records + Patient & Care Manager user accounts into PostgreSQL ehr_db
 """
 import io
 import asyncio
 import pandas as pd
+import bcrypt
 from datetime import date
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy import text
 from app.config import settings
+
+def get_password_hash(password: str) -> str:
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
 
 raw_data = """systolic_bp	diastolic_bp	heart_rate	respiratory_rate	temperature	spo2	pain_score_clinical	wbc	hemoglobin	platelet_count	sodium	potassium	creatinine	glucose	troponin	bnp	lactate	inr	diabetes_flag	hypertension_flag	cardiac_history_flag	copd_asthma_flag	ckd_flag	cancer_flag	immunocompromised_flag	chronic_condition_count	charlson_comorbidity_index	active_medication_count	on_anticoagulants_flag	on_insulin_flag	days_since_last_ed_visit	ed_visits_past_year	admissions_past_year	has_pcp_flag	age	gender	month	day_of_week	is_weekend	is_holiday	flu_season	hour_of_day	diabetes	hypertension	heart_disease	copd_asthma	chronic_kidney_disease	ed_visits_365d	days_since_last_ed	ed_visits_90d	ed_visits_30d	outpatient_visits_365d	days_since_last_pcp_visit	inpatient_admissions_365d	missed_appointments_6m	days_since_last_vitals	days_since_last_labs	has_anticoagulant	medication_adherence_rate	race	insurance_type	primary_language	zip_poverty_rate	rural_urban_status	has_primary_care	distance_to_pcp_miles	pqe_category	avoidable_ed
 1	109.0	77.0	81.0	15.0	37.0	100.0	5.4	7.0	11.6	259.0	140.4	4.01	1.1	91.0	0.026	50.0	1.41	1.05	0	0	0	0	0	0	1	1	2	3	0	0	107	3	0	0	59	male	10	4	0	0	0	13	0	0	0	0	0	3	107	2	2	0	822	0	0	203	321	0	0.85	Black	Private	Spanish	2.0	Urban	0	7.2	NonPQE_Other	0
@@ -22,22 +27,38 @@ df = pd.read_csv(io.StringIO(raw_data), sep=r'\s+', engine='python')
 async def seed_data():
     engine = create_async_engine(settings.DATABASE_URL)
     async with engine.begin() as conn:
-        for idx, row in df.iterrows():
+        print("[INFO] Seeding patient_ehr records and users into PostgreSQL ehr_db...")
+        
+        # 1. Seed Care Manager user account
+        cm_password_hash = get_password_hash("admin123")
+        cm_query = text("""
+        INSERT INTO users (username, password_hash, role, patient_id)
+        VALUES (:username, :password_hash, :role, NULL)
+        ON CONFLICT (username) DO UPDATE SET
+            password_hash = EXCLUDED.password_hash,
+            role = EXCLUDED.role,
+            updated_at = CURRENT_TIMESTAMP;
+        """)
+        await conn.execute(cm_query, {"username": "caremanager", "password_hash": cm_password_hash, "role": "CARE_MANAGER"})
+        print("[OK] Care Manager user seeded: username='caremanager', password='admin123'")
+        
+        # 2. Seed 5 Patients and their User Accounts
+        for idx in range(len(df)):
+            row = df.iloc[idx]
             row_id = idx + 1
             mrn = f"MRN1000000{row_id}"
             pat_id = f"PAT_0000000{row_id}"
             name = f"Sample Patient {row_id}"
+            username = f"patient{row_id}"
+            raw_password = "patient123"
+            password_hash = get_password_hash(raw_password)
             
             # Convert temp from C to F if < 50
             temp = float(row['temperature'])
             if temp < 50:
                 temp = round((temp * 9/5) + 32, 1)
             
-            # Check if record exists
-            check = await conn.execute(text("SELECT id FROM patient_ehr WHERE mrn = :mrn;"), {"mrn": mrn})
-            existing = check.scalar_one_or_none()
-            
-            insert_query = text("""
+            insert_ehr_query = text("""
             INSERT INTO patient_ehr (
                 mrn, patient_id, name, date_of_birth, age, gender, bmi, insurance_type, race,
                 diabetes_flag, heart_failure_flag, cardiac_history_flag, copd_asthma_flag, ckd_flag,
@@ -133,10 +154,29 @@ async def seed_data():
                 "clinical_notes": f"Sample dataset record {row_id} with PQE category: {row['pqe_category']}, avoidable_ed target: {row['avoidable_ed']}",
             }
             
-            await conn.execute(insert_query, params)
-            print(f"[OK] Seeded patient {name} (MRN: {mrn}) into patient_ehr in PostgreSQL")
+            await conn.execute(insert_ehr_query, params)
+            print(f"[OK] Seeded patient EHR: {name} (MRN: {mrn}, Patient ID: {pat_id})")
             
+            # Insert corresponding user account into users table
+            user_query = text("""
+            INSERT INTO users (username, password_hash, role, patient_id)
+            VALUES (:username, :password_hash, :role, :patient_id)
+            ON CONFLICT (username) DO UPDATE SET
+                password_hash = EXCLUDED.password_hash,
+                role = EXCLUDED.role,
+                patient_id = EXCLUDED.patient_id,
+                updated_at = CURRENT_TIMESTAMP;
+            """)
+            await conn.execute(user_query, {
+                "username": username,
+                "password_hash": password_hash,
+                "role": "PATIENT",
+                "patient_id": pat_id
+            })
+            print(f"[OK] Seeded user account: username='{username}', password='{raw_password}', role='PATIENT', patient_id='{pat_id}'")
+
     await engine.dispose()
+    print("\n[SUCCESS] All 5 sample patients and user credentials successfully populated!")
 
 if __name__ == "__main__":
     asyncio.run(seed_data())

@@ -5,11 +5,6 @@ Orchestrates: red-flag persistence → safety engine → PostgreSQL audit log.
 Isolation rule: NEVER import from intake/service.py.
 Reads session patient_id from session_store (shared state). Writes only to
 safety_assessments (owned by this segment).
-
-Fail-safe contract:
-  - safety_engine exception  → result=ERROR written to audit log, HTTP 500 raised
-  - DB unavailable           → HTTP 503, nothing written
-  - session not found        → HTTP 404
 """
 
 from __future__ import annotations
@@ -18,12 +13,16 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.patient.safety.schemas import RedFlagsIn, RedFlagsOut, SafetyResult
+from app.patient.pathway.service import run_pathway
+from app.patient.pathway.schemas import PathwayRequest, PathwayResponse
+from app.models.ehr import PatientEHR
 from app.config import settings
 from app.core import session_store
 from app.db.models import SafetyAssessment
@@ -56,6 +55,19 @@ def _get_session_or_404(session_id: str) -> dict:
     return session
 
 
+async def _get_ehr_for_patient(patient_id: str, db: AsyncSession) -> Optional[PatientEHR]:
+    conds = [
+        PatientEHR.patient_id == patient_id,
+        PatientEHR.mrn == patient_id,
+    ]
+    if patient_id.isdigit():
+        conds.append(PatientEHR.id == int(patient_id))
+
+    query = select(PatientEHR).where(or_(*conds))
+    result = await db.execute(query)
+    return result.scalars().first()
+
+
 # ── Service functions ─────────────────────────────────────────────────────────
 
 async def save_red_flags(session_id: str, payload: RedFlagsIn) -> RedFlagsOut:
@@ -74,7 +86,7 @@ async def run_safety_engine(session_id: str, db: AsyncSession) -> SafetyResult:
 
     Output is always YES or NO:
       YES → EMERGENCY_PATHWAY  (any red flag triggered)
-      NO  → CMS_ML             (no red flags triggered; route to ML pathway)
+      NO  → CMS_ML             (no red flags triggered; route to best_avoidable ML model)
 
     Every call — including ERROR — produces a PostgreSQL audit record.
     """
@@ -126,7 +138,7 @@ async def run_safety_engine(session_id: str, db: AsyncSession) -> SafetyResult:
             result=result_dict["result"],
             next_action=result_dict["next_action"],
             triggered_rules=result_dict["triggered_rules"],
-            missing_information=[],          # field retained in DB model for schema compat
+            missing_information=[],
             red_flags_snapshot=red_flags_raw,
             error_detail=error_detail,
             evaluated_at=now,
@@ -141,24 +153,54 @@ async def run_safety_engine(session_id: str, db: AsyncSession) -> SafetyResult:
             detail="Database unavailable — assessment not persisted.",
         ) from exc
 
-    # Raise HTTP 500 AFTER audit row is written, so the ERROR is always logged
     if result_dict["result"] == "ERROR":
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Safety engine error: {error_detail}",
         )
 
+    # ── Handoff to best_avoidable ML model when result is NO (CMS_ML) ──────────
+    pathway_res: Optional[PathwayResponse] = None
+    if result_dict["result"] == "NO":
+        try:
+            intake_features = session.get("features") or {}
+            ehr_data = await _get_ehr_for_patient(patient_id, db)
+            
+            pathway_req = PathwayRequest(
+                patient_id=patient_id,
+                chief_complaint=intake_features.get("chief_complaint"),
+                symptom_onset=intake_features.get("symptom_onset"),
+                pain_scale=intake_features.get("pain_scale", 0),
+                location=intake_features.get("location"),
+                red_flag_answers=red_flags_raw,
+            )
+            pathway_res = run_pathway(
+                patient_id=patient_id,
+                request=pathway_req,
+                ehr_data=ehr_data,
+            )
+            session_store.update_session(
+                session_id,
+                pathway=pathway_res.model_dump(),
+                status="COMPLETE",
+            )
+            logger.info("Successfully executed ML best_avoidable_ed_model for session %s | Avoidable: %s | Score: %.1f%%",
+                        session_id, pathway_res.decision, pathway_res.risk_score)
+        except Exception as exc:
+            logger.error("Failed to run ML best_avoidable pathway for session %s: %s", session_id, exc)
+
     return SafetyResult(
         session_id=session_id,
         evaluated_at=now,
         error_detail=error_detail,
+        pathway=pathway_res,
         **result_dict,
     )
 
 
 async def get_latest_assessment(session_id: str, db: AsyncSession) -> SafetyResult:
     """Return the most recent audit record for this session."""
-    _get_session_or_404(session_id)
+    session = _get_session_or_404(session_id)
 
     stmt = (
         select(SafetyAssessment)
@@ -175,6 +217,9 @@ async def get_latest_assessment(session_id: str, db: AsyncSession) -> SafetyResu
             detail=f"No safety assessment found for session '{session_id}'.",
         )
 
+    pathway_data = session.get("pathway")
+    pathway_res = PathwayResponse(**pathway_data) if pathway_data else None
+
     return SafetyResult(
         session_id=row.session_id,
         result=row.result,
@@ -182,4 +227,5 @@ async def get_latest_assessment(session_id: str, db: AsyncSession) -> SafetyResu
         triggered_rules=row.triggered_rules,
         error_detail=row.error_detail,
         evaluated_at=row.evaluated_at,
+        pathway=pathway_res,
     )

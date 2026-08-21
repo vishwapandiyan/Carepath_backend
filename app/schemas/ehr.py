@@ -160,94 +160,94 @@ class PatientEHRResponse(BaseModel):
     
     # Demographics
     name: str
-    date_of_birth: date
-    age: int
-    gender: str
-    bmi: float
-    insurance_type: str
-    race: Optional[str]
+    date_of_birth: Optional[date] = None
+    age: Optional[int] = 0
+    gender: Optional[str] = "other"
+    bmi: Optional[float] = 25.0
+    insurance_type: Optional[str] = "Private"
+    race: Optional[str] = None
     
     # Chronic Conditions
-    diabetes_flag: int
-    heart_failure_flag: int
-    cardiac_history_flag: int
-    copd_asthma_flag: int
-    ckd_flag: int
-    cancer_flag: int
-    dementia_flag: int
-    hypertension_flag: int
-    immunocompromised_flag: int
-    charlson_comorbidity_index: int
+    diabetes_flag: Optional[int] = 0
+    heart_failure_flag: Optional[int] = 0
+    cardiac_history_flag: Optional[int] = 0
+    copd_asthma_flag: Optional[int] = 0
+    ckd_flag: Optional[int] = 0
+    cancer_flag: Optional[int] = 0
+    dementia_flag: Optional[int] = 0
+    hypertension_flag: Optional[int] = 0
+    immunocompromised_flag: Optional[int] = 0
+    charlson_comorbidity_index: Optional[int] = 0
     
     # Vital Signs
-    systolic_bp: Optional[int]
-    diastolic_bp: Optional[int]
-    heart_rate: Optional[int]
-    respiratory_rate: Optional[int]
-    temperature: Optional[float]
-    spo2: Optional[int]
-    pain_score_clinical: Optional[float]
+    systolic_bp: Optional[int] = None
+    diastolic_bp: Optional[int] = None
+    heart_rate: Optional[int] = None
+    respiratory_rate: Optional[int] = None
+    temperature: Optional[float] = None
+    spo2: Optional[int] = None
+    pain_score_clinical: Optional[float] = None
     
     # Lab Values
-    hemoglobin: float
-    creatinine: float
-    glucose: int
-    hba1c: Optional[float]
-    wbc_count: float
-    total_bilirubin: Optional[float]
-    platelet_count: Optional[int]
-    sodium: Optional[float]
-    potassium: Optional[float]
-    troponin: Optional[float]
-    bnp: Optional[int]
-    lactate: Optional[float]
-    inr: Optional[float]
+    hemoglobin: Optional[float] = None
+    creatinine: Optional[float] = None
+    glucose: Optional[int] = None
+    hba1c: Optional[float] = None
+    wbc_count: Optional[float] = None
+    total_bilirubin: Optional[float] = None
+    platelet_count: Optional[int] = None
+    sodium: Optional[float] = None
+    potassium: Optional[float] = None
+    troponin: Optional[float] = None
+    bnp: Optional[int] = None
+    lactate: Optional[float] = None
+    inr: Optional[float] = None
     
     # Medications
-    active_medication_count: int
-    medication_count_at_discharge: Optional[int]
-    polypharmacy_flag: int
-    high_risk_medication_flag: int
-    on_anticoagulants_flag: int
-    on_insulin_flag: int
-    medication_adherence_rate: Optional[float]
+    active_medication_count: Optional[int] = 0
+    medication_count_at_discharge: Optional[int] = None
+    polypharmacy_flag: Optional[int] = 0
+    high_risk_medication_flag: Optional[int] = 0
+    on_anticoagulants_flag: Optional[int] = 0
+    on_insulin_flag: Optional[int] = 0
+    medication_adherence_rate: Optional[float] = None
     
     # Utilization History
-    previous_admissions_12m: int
-    previous_er_visits_12m: int
-    prior_30_day_readmission_flag: int
-    days_since_last_ed_visit: Optional[int]
-    ed_visits_90d: Optional[int]
-    ed_visits_30d: Optional[int]
-    outpatient_visits_365d: Optional[int]
-    days_since_last_pcp_visit: Optional[int]
-    missed_appointments_6m: Optional[int]
+    previous_admissions_12m: Optional[int] = 0
+    previous_er_visits_12m: Optional[int] = 0
+    prior_30_day_readmission_flag: Optional[int] = 0
+    days_since_last_ed_visit: Optional[int] = None
+    ed_visits_90d: Optional[int] = None
+    ed_visits_30d: Optional[int] = None
+    outpatient_visits_365d: Optional[int] = None
+    days_since_last_pcp_visit: Optional[int] = None
+    missed_appointments_6m: Optional[int] = None
     
     # Admission Data
-    admission_date: Optional[date]
-    discharge_date: Optional[date]
-    admission_type: Optional[str]
-    length_of_stay_days: Optional[int]
-    icu_stay_flag: int
-    discharge_destination: Optional[str]
-    follow_up_within_7_days_flag: int
-    follow_up_appointment_date: Optional[date]
-    total_charges_index_stay: Optional[float]
+    admission_date: Optional[date] = None
+    discharge_date: Optional[date] = None
+    admission_type: Optional[str] = None
+    length_of_stay_days: Optional[int] = None
+    icu_stay_flag: Optional[int] = 0
+    discharge_destination: Optional[str] = None
+    follow_up_within_7_days_flag: Optional[int] = 0
+    follow_up_appointment_date: Optional[date] = None
+    total_charges_index_stay: Optional[float] = None
     
     # Clinical Notes
-    clinical_notes: Optional[str]
+    clinical_notes: Optional[str] = None
     
     # Additional Administrative Fields
-    contact_number: Optional[str]
-    email: Optional[str]
-    address: Optional[str]
-    insurance_id: Optional[str]
-    is_active: int
-    deleted_at: Optional[datetime]
+    contact_number: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+    insurance_id: Optional[str] = None
+    is_active: Optional[int] = 1
+    deleted_at: Optional[datetime] = None
     
     # Timestamps
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     
     class Config:
         from_attributes = True
@@ -259,13 +259,13 @@ class PatientEHRListResponse(BaseModel):
     patient_id: str
     mrn: str
     name: str
-    date_of_birth: date
-    age: int
-    gender: str
-    contact_number: Optional[str]
-    email: Optional[str]
-    is_active: int
-    created_at: datetime
+    date_of_birth: Optional[date] = None
+    age: Optional[int] = 0
+    gender: Optional[str] = "other"
+    contact_number: Optional[str] = None
+    email: Optional[str] = None
+    is_active: Optional[int] = 1
+    created_at: Optional[datetime] = None
     
     class Config:
         from_attributes = True
