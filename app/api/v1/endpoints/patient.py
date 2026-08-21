@@ -119,16 +119,8 @@ async def predict_ed_avoidable(
         
         if request.patient_mrn:
             try:
-                # Query EHR database by MRN, patient_id, or patient name
-                query = select(PatientEHR).where(
-                    or_(
-                        PatientEHR.mrn == request.patient_mrn,
-                        PatientEHR.patient_id == request.patient_mrn,
-                        PatientEHR.name.ilike(f"%{request.patient_mrn}%")
-                    )
-                )
-                result = await db.execute(query)
-                ehr_data = result.scalars().first()
+                from app.patient.safety.service import _get_ehr_for_patient
+                ehr_data = await _get_ehr_for_patient(request.patient_mrn, db)
                 
                 if ehr_data:
                     used_ehr = True

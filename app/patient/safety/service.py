@@ -57,32 +57,46 @@ def _get_session_or_404(session_id: str) -> dict:
 
 
 async def _get_ehr_for_patient(patient_id: str, db: AsyncSession) -> Optional[PatientEHR]:
-    if not patient_id:
+    if not patient_id or not str(patient_id).strip():
         return None
 
-    # 1. Look up User table if patient_id is a username or patient_id string
-    target_ids = [patient_id]
+    clean_id = str(patient_id).strip()
+    candidate_ids = {clean_id}
+
+    # 1. Search User table by username or patient_id (case-insensitive)
     try:
         user_res = await db.execute(
-            select(User).where(or_(User.username == patient_id, User.patient_id == patient_id))
+            select(User).where(
+                or_(
+                    User.username.ilike(clean_id),
+                    User.patient_id.ilike(clean_id)
+                )
+            )
         )
-        user = user_res.scalars().first()
-        if user and user.patient_id:
-            target_ids.append(user.patient_id)
+        users = user_res.scalars().all()
+        for u in users:
+            if u.patient_id:
+                candidate_ids.add(u.patient_id)
+            if u.username:
+                candidate_ids.add(u.username)
     except Exception as err:
         logger.warning("Could not query User model during EHR resolution: %s", err)
 
-    cleaned_name = patient_id.replace("_", " ").replace("-", " ")
+    cleaned_name = clean_id.replace("_", " ").replace("-", " ")
 
+    # 2. Search PatientEHR table by candidate IDs, MRN, or Name
     conds = [
-        PatientEHR.patient_id.in_(target_ids),
-        PatientEHR.mrn.in_(target_ids),
+        PatientEHR.patient_id.in_(list(candidate_ids)),
+        PatientEHR.mrn.in_(list(candidate_ids)),
+        PatientEHR.name.ilike(f"%{clean_id}%"),
         PatientEHR.name.ilike(f"%{cleaned_name}%"),
     ]
-    if patient_id.isdigit():
-        conds.append(PatientEHR.id == int(patient_id))
+    if clean_id.isdigit():
+        conds.append(PatientEHR.id == int(clean_id))
 
     query = select(PatientEHR).where(or_(*conds))
+    result = await db.execute(query)
+    return result.scalars().first()
     result = await db.execute(query)
     return result.scalars().first()
 
