@@ -1,15 +1,15 @@
+import logging
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Union
 
 from .schemas import CarePlanOption, PathwayDecision, PathwayRequest, PathwayResponse
 from app.services.ed_feature_mapper import ed_feature_mapper
-from app.services.ed_prediction_service import ed_prediction_service
+from app.services.ed_prediction_service import ed_prediction_service, ml_file_logger
 
 # Decision boundary on the model's probability that the ED visit is AVOIDABLE.
-# The model's own hard 0.5 cutoff sends most cases to the ER; a slightly more
-# lenient cutoff routes borderline patients to alternative care. Raise this to
-# be more conservative (more ER), lower it to route more to alternative care.
-AVOIDABLE_PROB_THRESHOLD = 0.45
+# Standard 0.50 cutoff: prob_avoidable >= 0.50 -> POTENTIALLY_AVOIDABLE (Alternative Care),
+# prob_avoidable < 0.50 -> NOT_AVOIDABLE (Emergency Department).
+AVOIDABLE_PROB_THRESHOLD = 0.50
 
 
 def run_pathway(
@@ -85,6 +85,17 @@ def run_pathway(
             f"Avoidable ED = '{avoidable_ed}' with {confidence} confidence. "
             f"Calculated Emergency Risk Score: {final_score}% ({risk_level}). "
             f"{ml_prediction['recommendation']}"
+        )
+        
+        ml_file_logger.info(
+            "PATHWAY DECISION | Patient: %s | Prob Avoidable: %.4f | Emergency Risk Score: %.1f%% | Risk Level: %s | Final Decision: %s | Complaint: '%s' (Pain: %s)",
+            patient_id,
+            prob_avoidable,
+            final_score,
+            risk_level,
+            decision.value if hasattr(decision, 'value') else decision,
+            chief_complaint,
+            pain_scale,
         )
     else:
         # Fallback heuristic calculation if ML model is unavailable

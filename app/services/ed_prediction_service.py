@@ -13,9 +13,21 @@ Model Output:
 import pickle
 import pandas as pd
 import numpy as np
+import json
 from pathlib import Path
 from typing import Dict
 import logging
+
+LOG_DIR = Path("logs")
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+ML_LOG_FILE = LOG_DIR / "ed_ml_predictions.log"
+
+ml_file_logger = logging.getLogger("ed_ml_logger")
+ml_file_logger.setLevel(logging.INFO)
+if not ml_file_logger.handlers:
+    fh = logging.FileHandler(ML_LOG_FILE, encoding="utf-8")
+    fh.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+    ml_file_logger.addHandler(fh)
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +207,14 @@ class EDPredictionService:
                 "confidence": confidence,
                 "recommendation": recommendation
             }
+            
+            ml_file_logger.info(
+                "ED ML MODEL INFERENCE | Raw Prob Avoidable: %.4f (%.1f%%) | Prediction: %s | Features: %s",
+                probability_avoidable,
+                probability_avoidable * 100.0,
+                prediction,
+                json.dumps(features, default=str),
+            )
             
             logger.info(
                 f"ED Prediction: {prediction} (probability={probability_avoidable:.3f}, "
