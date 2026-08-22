@@ -172,12 +172,12 @@ async def send_message(
     Send a message in a chat session
     
     This endpoint:
-    1. Stores the user message
-    2. Generates AI response (TODO: integrate with chatbot)
-    3. Stores the AI response
+    1. Stores the message (user or assistant)
+    2. If user message: generates AI response (TODO: integrate with chatbot)
+    3. If assistant message (role_override): just stores it (for intake bot integration)
     4. Auto-generates title if first user message
     
-    Returns both user and assistant messages
+    Returns user message and optional assistant response
     """
     try:
         # Verify ownership
@@ -188,59 +188,67 @@ async def send_message(
         if not context.get("patient_id") and chat.patient_id:
             context["patient_id"] = chat.patient_id
         
-        # Create user message
-        user_message = await chat_service.create_message(
+        # Check if this is a role override (assistant message being saved directly)
+        role_override = context.get("role_override")
+        message_role = role_override if role_override in ["user", "assistant", "system"] else request.role.value
+        
+        # Create the message
+        saved_message = await chat_service.create_message(
             db=db,
             session_id=session_id,
-            role=request.role.value,
+            role=message_role,
             content=request.content,
             attachments=[att.dict() for att in request.attachments] if request.attachments else None,
             context=context
         )
         
-        # Generate AI response
-        # TODO: Integrate with existing chatbot service
-        # For now, return a placeholder response
-        assistant_content = "I'm here to help! This is a placeholder response. (Full chatbot integration coming soon)"
+        assistant_message = None
         
-        assistant_message = await chat_service.create_message(
-            db=db,
-            session_id=session_id,
-            role="assistant",
-            content=assistant_content,
-            metadata={
-                "model": "gemini-1.5-flash",
-                "timestamp": datetime.utcnow().isoformat()
-            },
-            context=context
-        )
-        
-        # Auto-generate title if this is the first user message
-        if chat.message_count <= 2 and chat.is_title_auto_generated and chat.title == "New Chat":
-            try:
-                generated_title = await title_generator.generate_title_with_context(
-                    first_message=request.content,
-                    patient_id=chat.patient_id,
-                    context=context
-                )
-                await chat_service.update_chat_title(
-                    db=db,
-                    session_id=session_id,
-                    user_id=current_user.id,
-                    title=generated_title,
-                    is_auto_generated=True
-                )
-            except Exception as e:
-                logger.warning(f"Auto title generation failed: {e}")
+        # Only generate AI response if this is a user message (not a role override)
+        if message_role == "user" and not role_override:
+            # Generate AI response
+            # TODO: Integrate with existing chatbot service
+            # For now, return a placeholder response
+            assistant_content = "I'm here to help! This is a placeholder response. (Full chatbot integration coming soon)"
+            
+            assistant_message = await chat_service.create_message(
+                db=db,
+                session_id=session_id,
+                role="assistant",
+                content=assistant_content,
+                metadata={
+                    "model": "gemini-1.5-flash",
+                    "timestamp": datetime.utcnow().isoformat()
+                },
+                context=context
+            )
+            
+            # Auto-generate title if this is the first user message
+            if chat.message_count <= 2 and chat.is_title_auto_generated and chat.title == "New Chat":
+                try:
+                    generated_title = await title_generator.generate_title_with_context(
+                        first_message=request.content,
+                        patient_id=chat.patient_id,
+                        context=context
+                    )
+                    await chat_service.update_chat_title(
+                        db=db,
+                        session_id=session_id,
+                        user_id=current_user.id,
+                        title=generated_title,
+                        is_auto_generated=True
+                    )
+                except Exception as e:
+                    logger.warning(f"Auto title generation failed: {e}")
         
         # Refresh chat to get updated timestamp
         await db.refresh(chat)
         
-        logger.info(f"Message sent in chat {session_id} by user {current_user.id}")
+        logger.info(f"Message sent in chat {session_id} by user {current_user.id} (role: {message_role})")
         
         return MessageSendResponse(
-            user_message=format_message_response(user_message),
-            assistant_response=format_message_response(assistant_message),
+            user_message=format_message_response(saved_message),
+            assistant_response=format_message_response(assistant_message) if assistant_message else None,
             session_updated_at=chat.updated_at
         )
         
