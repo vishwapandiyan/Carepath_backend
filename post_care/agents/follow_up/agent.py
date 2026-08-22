@@ -421,7 +421,8 @@ def _handle_checkin_task(
         status=status,
         description=description,
         doctor_instruction=doctor_instruction,
-        risk_level=risk_level
+        risk_level=risk_level,
+        care_plan_id=care_plan_id
     )
 
 
@@ -533,12 +534,14 @@ def _create_new_checkin(
     status: str,
     description: Optional[str],
     doctor_instruction: Optional[str],
-    risk_level: str
+    risk_level: str,
+    care_plan_id: str
 ) -> Dict[str, Any]:
     """
     Create a new check-in record for a task.
     
-    Uses task description and doctor instruction to contextualize the check-in.
+    Uses task description, doctor instruction, and clinical notes to create
+    personalized check-in messages.
     Does NOT create a new task.
     
     Args:
@@ -548,12 +551,28 @@ def _create_new_checkin(
         description: Task description (for check-in message)
         doctor_instruction: Doctor instruction (for check-in context)
         risk_level: Patient risk level (HIGH/MODERATE/LOW)
+        care_plan_id: Associated care plan ID
     
     Returns:
         Dict with next_action and follow_up_data
     """
     
     try:
+        # Get care plan to access MRN
+        care_plan = tools.get_active_care_plan_by_id(care_plan_id)
+        
+        # Get clinical notes from EHR for personalized messaging
+        clinical_notes = None
+        if care_plan and care_plan.get('mrn'):
+            try:
+                from post_care.database.repositories import PatientEHRRepository
+                ehr_repo = PatientEHRRepository()
+                patient_ehr = ehr_repo.get_patient_by_mrn(care_plan['mrn'])
+                if patient_ehr:
+                    clinical_notes = patient_ehr.get('clinical_notes')
+            except Exception as e:
+                logger.warning(f"Could not fetch clinical notes for personalized message: {str(e)}")
+        
         # Create check-in with task information
         checkin_type = _task_type_to_checkin_type(task_type)
         
@@ -565,7 +584,9 @@ def _create_new_checkin(
             message=_build_checkin_message(
                 task_type=task_type,
                 description=description,
-                doctor_instruction=doctor_instruction
+                doctor_instruction=doctor_instruction,
+                clinical_notes=clinical_notes,
+                risk_level=risk_level
             )
         )
         
@@ -651,44 +672,110 @@ def _task_type_to_checkin_type(task_type: str) -> str:
 def _build_checkin_message(
     task_type: str,
     description: Optional[str],
-    doctor_instruction: Optional[str]
+    doctor_instruction: Optional[str],
+    clinical_notes: Optional[str] = None,
+    risk_level: str = "MODERATE"
 ) -> str:
     """
-    Build a check-in message from task description and doctor instruction.
+    Build a personalized check-in message from task info and clinical context.
     
-    Uses personalized task information from Care Plan Agent.
-    Does NOT rewrite medical instructions.
+    Generates specific, actionable messages based on:
+    - Doctor instructions (highest priority)
+    - Task description
+    - Clinical notes (conditions, vitals, medications)
+    - Risk level
     
     Args:
         task_type: Type of task
         description: Task description
         doctor_instruction: Doctor instruction
+        clinical_notes: Patient clinical notes from EHR
+        risk_level: Patient risk level (HIGH/MODERATE/LOW)
     
     Returns:
-        Check-in message string
+        Personalized check-in message string
     """
     
     # Use doctor instruction if available (most specific)
     if doctor_instruction:
         return f"Follow-up: {doctor_instruction}"
     
-    # Fall back to description
-    if description:
+    # Use description if available
+    if description and description not in ["Basic patient check-in.", "Follow-up reminder.", "Patient support and guidance."]:
         return f"Follow-up: {description}"
     
-    # Generic message based on task type
-    generic_messages = {
-        "EARLY_CHECKIN": "Early patient check-in",
-        "FREQUENT_CHECKINS": "Frequent check-in",
-        "FOLLOW_UP_APPOINTMENT": "Follow-up appointment",
-        "APPOINTMENT_MONITORING": "Appointment monitoring",
-        "CONCERN_ESCALATION": "Concern escalation",
-        "CHECKIN": "Patient check-in",
-        "APPOINTMENT_REMINDER": "Appointment reminder",
-        "RESPONSE_MONITORING": "Response monitoring",
-        "BASIC_CHECKIN": "Basic check-in",
-        "FOLLOW_UP_REMINDER": "Follow-up reminder",
-        "PATIENT_SUPPORT": "Patient support"
+    # Generate personalized message based on clinical notes and risk level
+    if clinical_notes:
+        # Extract key conditions from clinical notes
+        has_diabetes = 'diabetes' in clinical_notes.lower()
+        has_heart_failure = 'heart failure' in clinical_notes.lower() or 'chf' in clinical_notes.lower()
+        has_hypertension = 'hypertension' in clinical_notes.lower()
+        has_copd = 'copd' in clinical_notes.lower() or 'asthma' in clinical_notes.lower()
+        has_ckd = 'kidney disease' in clinical_notes.lower() or 'ckd' in clinical_notes.lower()
+        on_insulin = 'insulin' in clinical_notes.lower()
+        on_anticoag = 'anticoagulation' in clinical_notes.lower() or 'anticoagulants' in clinical_notes.lower()
+        
+        # HIGH RISK: Multiple conditions or intensive monitoring
+        if risk_level == "HIGH":
+            messages = []
+            
+            if has_heart_failure:
+                messages.append("How are you feeling today? Any shortness of breath, swelling in legs, or sudden weight gain (>2 lbs/day)?")
+            
+            if has_diabetes and on_insulin:
+                messages.append("How are your blood sugar levels? Please share your recent readings and any concerns.")
+            
+            if on_anticoag:
+                messages.append("Any unusual bleeding, bruising, or blood in stool/urine? When was your last INR check?")
+            
+            if has_copd:
+                messages.append("How is your breathing? Any increased cough, wheezing, or need for rescue inhaler?")
+            
+            if has_ckd:
+                messages.append("How are you managing fluids? Any swelling, changes in urination, or extreme fatigue?")
+            
+            # Return first relevant message or generic for high risk
+            if messages:
+                return messages[0]
+            else:
+                return "How are you feeling today? Any new symptoms or concerns since discharge?"
+        
+        # MODERATE RISK: Standard monitoring with focus on main conditions
+        elif risk_level == "MODERATE":
+            if has_heart_failure:
+                return "How are you feeling? Please report any shortness of breath or leg swelling."
+            
+            if has_diabetes:
+                return "How are your blood sugars? Any symptoms of high or low blood sugar?"
+            
+            if has_hypertension:
+                return "How is your blood pressure? Have you been taking your medications regularly?"
+            
+            if has_copd:
+                return "How is your breathing today? Any increased difficulty or coughing?"
+            
+            if on_anticoag or on_insulin:
+                return "How are you doing with your medications? Any side effects or concerns?"
+            
+            # Generic moderate risk
+            return "How are you feeling today? Any concerns about your medications or symptoms?"
+        
+        # LOW RISK: Simple wellness check
+        else:
+            return "How are you feeling since your discharge? Any questions or concerns?"
+    
+    # Fall back to task-type-specific messages
+    specific_messages = {
+        "EARLY_CHECKIN": "How are you feeling after your discharge? Any immediate concerns or symptoms?",
+        "FREQUENT_CHECKINS": "Checking in on your recovery. How are you feeling today?",
+        "FOLLOW_UP_APPOINTMENT": "Have you scheduled your follow-up appointment? Do you need help with scheduling?",
+        "APPOINTMENT_MONITORING": "Reminder: Do you have an upcoming appointment scheduled?",
+        "CHECKIN": "How is your recovery going? Any new symptoms or concerns?",
+        "APPOINTMENT_REMINDER": "You have an upcoming appointment. Do you need any assistance?",
+        "RESPONSE_MONITORING": "Following up on your previous message. How are things now?",
+        "BASIC_CHECKIN": "How are you feeling today? Everything going well with your recovery?",
+        "FOLLOW_UP_REMINDER": "Just checking in on your progress. Any concerns to discuss?",
+        "PATIENT_SUPPORT": "How can we support you today? Any questions about your care plan?"
     }
     
-    return generic_messages.get(task_type, "Patient follow-up check-in")
+    return specific_messages.get(task_type, "How are you feeling today? Any concerns about your health?")

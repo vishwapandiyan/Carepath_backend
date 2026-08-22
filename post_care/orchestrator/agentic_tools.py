@@ -221,7 +221,7 @@ def call_follow_up_agent(
                 task_id=t["task_id"],
                 task_type=t["task_type"],
                 status=t.get("status", "PENDING"),
-                description=t.get("description"),
+                description=t.get("task_description"),  # Use task_description consistently
                 doctor_instruction=t.get("doctor_instruction")
             )
             for t in tasks

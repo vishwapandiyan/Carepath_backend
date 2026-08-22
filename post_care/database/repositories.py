@@ -129,7 +129,7 @@ class CarePlanRepository:
             
             cursor.execute(
                 """
-                SELECT care_plan_id, patient_id, mrn, risk_level, intensity, status, doctor_instructions, created_at
+                SELECT id, patient_id, mrn, risk_level, intensity, status, doctor_instructions, created_at
                 FROM care_plans
                 WHERE mrn = %s AND status = 'ACTIVE'
                 """,
@@ -173,9 +173,9 @@ class CarePlanRepository:
             
             cursor.execute(
                 """
-                SELECT care_plan_id, patient_id, mrn, risk_level, intensity, status, doctor_instructions, created_at
+                SELECT id, patient_id, mrn, risk_level, intensity, status, doctor_instructions, created_at
                 FROM care_plans
-                WHERE care_plan_id = %s
+                WHERE id = %s
                 """,
                 (care_plan_id,)
             )
@@ -229,8 +229,8 @@ class CarePlanRepository:
                 f"""
                 UPDATE care_plans
                 SET {set_clause}
-                WHERE care_plan_id = %s
-                RETURNING care_plan_id, patient_id, mrn, risk_level, intensity, status, doctor_instructions, created_at, updated_at
+                WHERE id = %s
+                RETURNING id, patient_id, mrn, risk_level, intensity, status, doctor_instructions, created_at, updated_at
                 """,
                 values
             )
@@ -300,7 +300,7 @@ class CarePlanTaskRepository:
             
             # Verify care plan exists
             cursor.execute(
-                "SELECT care_plan_id FROM care_plans WHERE care_plan_id = %s",
+                "SELECT id FROM care_plans WHERE id = %s",
                 (care_plan_id,)
             )
             
@@ -314,11 +314,11 @@ class CarePlanTaskRepository:
             cursor.execute(
                 """
                 INSERT INTO care_plan_tasks 
-                (task_id, care_plan_id, task_type, status, description, doctor_instruction, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                RETURNING task_id, care_plan_id, task_type, status, description, doctor_instruction, created_at
+                (id, care_plan_id, task_type, status, task_description, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                RETURNING id, care_plan_id, task_type, status, task_description, created_at
                 """,
-                (task_id, care_plan_id, task_type, status, description, doctor_instruction)
+                (task_id, care_plan_id, task_type, status, description)
             )
             
             result = cursor.fetchone()
@@ -329,9 +329,9 @@ class CarePlanTaskRepository:
                 "care_plan_id": result[1],
                 "task_type": result[2],
                 "status": result[3],
-                "description": result[4],
-                "doctor_instruction": result[5],
-                "created_at": result[6].isoformat() if result[6] else None
+                "task_description": result[4],  # Match database column name
+                "doctor_instruction": None,  # Not stored in this table structure
+                "created_at": result[5].isoformat() if result[5] else None
             }
         
         except Exception as e:
@@ -358,7 +358,7 @@ class CarePlanTaskRepository:
             
             cursor.execute(
                 """
-                SELECT task_id, care_plan_id, task_type, status, description, doctor_instruction, created_at, updated_at
+                SELECT id, care_plan_id, task_type, status, task_description, created_at, updated_at
                 FROM care_plan_tasks
                 WHERE care_plan_id = %s
                 ORDER BY created_at ASC
@@ -375,10 +375,10 @@ class CarePlanTaskRepository:
                     "care_plan_id": result[1],
                     "task_type": result[2],
                     "status": result[3],
-                    "description": result[4],
-                    "doctor_instruction": result[5],
-                    "created_at": result[6].isoformat() if result[6] else None,
-                    "updated_at": result[7].isoformat() if result[7] else None
+                    "task_description": result[4],  # Match database column name
+                    "doctor_instruction": None,  # Not stored in this table structure
+                    "created_at": result[5].isoformat() if result[5] else None,
+                    "updated_at": result[6].isoformat() if result[6] else None
                 })
             
             return tasks
@@ -418,8 +418,8 @@ class CarePlanTaskRepository:
                 f"""
                 UPDATE care_plan_tasks
                 SET {set_clause}
-                WHERE task_id = %s
-                RETURNING task_id, care_plan_id, task_type, status, description, doctor_instruction, created_at, updated_at
+                WHERE id = %s
+                RETURNING id, care_plan_id, task_type, status, task_description, created_at, updated_at
                 """,
                 values
             )
@@ -436,10 +436,10 @@ class CarePlanTaskRepository:
                 "care_plan_id": result[1],
                 "task_type": result[2],
                 "status": result[3],
-                "description": result[4],
-                "doctor_instruction": result[5],
-                "created_at": result[6].isoformat() if result[6] else None,
-                "updated_at": result[7].isoformat() if result[7] else None
+                "task_description": result[4],  # Match database column name
+                "doctor_instruction": None,  # Not stored in this table structure
+                "created_at": result[5].isoformat() if result[5] else None,
+                "updated_at": result[6].isoformat() if result[6] else None
             }
         
         except Exception as e:
@@ -466,7 +466,7 @@ class CarePlanTaskRepository:
             
             cursor.execute(
                 """
-                SELECT task_id, care_plan_id, task_type, status, description, doctor_instruction, created_at, updated_at
+                SELECT id, care_plan_id, task_type, status, task_description, created_at, updated_at
                 FROM care_plan_tasks
                 WHERE care_plan_id = %s AND status = 'PENDING'
                 ORDER BY created_at ASC
@@ -485,10 +485,10 @@ class CarePlanTaskRepository:
                 "care_plan_id": result[1],
                 "task_type": result[2],
                 "status": result[3],
-                "description": result[4],
-                "doctor_instruction": result[5],
-                "created_at": result[6].isoformat() if result[6] else None,
-                "updated_at": result[7].isoformat() if result[7] else None
+                "task_description": result[4],  # Match database column name
+                "doctor_instruction": None,  # Not stored in this table structure
+                "created_at": result[5].isoformat() if result[5] else None,
+                "updated_at": result[6].isoformat() if result[6] else None
             }
         
         finally:

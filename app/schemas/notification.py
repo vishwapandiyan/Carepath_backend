@@ -57,8 +57,34 @@ class NotificationOut(NotificationBase):
 
     class Config:
         from_attributes = True
-        # Map 'metadata' field to 'meta_data' column in database
+        # Map 'meta_data' field from database to 'metadata' in response
         populate_by_name = True
+    
+    @classmethod
+    def model_validate(cls, obj):
+        """Custom validation to handle meta_data -> metadata conversion"""
+        if hasattr(obj, 'meta_data'):
+            # Convert database object with meta_data to dict
+            data = {
+                'id': str(obj.id),  # Convert UUID to string
+                'patient_id': obj.patient_id,
+                'notification_type': obj.notification_type,
+                'title': obj.title,
+                'message': obj.message,
+                'task_index': obj.task_index,
+                'task_text': obj.task_text,
+                'metadata': obj.meta_data,  # Map meta_data to metadata
+                'priority': obj.priority,
+                'scheduled_for': obj.scheduled_for,
+                'expires_at': obj.expires_at,
+                'status': obj.status,
+                'delivered_at': obj.delivered_at,
+                'read_at': obj.read_at,
+                'acted_at': obj.acted_at,
+                'created_at': obj.created_at,
+            }
+            return super().model_validate(data)
+        return super().model_validate(obj)
 
 
 class NotificationListResponse(BaseModel):

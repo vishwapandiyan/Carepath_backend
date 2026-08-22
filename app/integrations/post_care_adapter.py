@@ -323,8 +323,9 @@ class PostCareStreamingAdapter:
                             notification_count = 0
                             for idx, task in enumerate(tasks):
                                 task_status = task.get("status", "PENDING")
-                                if task_status in ("PENDING", "pending"):
-                                    task_text = task.get("description") or task.get("task_type") or task.get("task", f"Task {idx+1}")
+                                if task_status in ("PENDING", "pending", "IN_PROGRESS", "in_progress"):
+                                    # Note: tasks in state use "description" field (from orchestrator tool conversion)
+                                    task_text = task.get("description", f"Task {idx+1}")
                                     await generate_task_reminder(
                                         db=db,
                                         patient_id=self.patient_id,
@@ -343,6 +344,94 @@ class PostCareStreamingAdapter:
                                 await asyncio.sleep(0.3)
                         except Exception as notif_err:
                             logger.warning(f"Failed to auto-send notifications: {notif_err}")
+                            # Rollback the failed transaction so we can continue
+                            try:
+                                await db.rollback()
+                            except:
+                                pass
+                    
+                    # STEP 2: CRITICAL - Sync to post_discharge_statuses for Care Manager visibility
+                    if db:
+                        try:
+                            from app.db.models import PostDischargeStatus
+                            from sqlalchemy import select
+                            
+                            yield self._event("saving", {
+                                "message": "Syncing to care manager dashboard..."
+                            })
+                            await asyncio.sleep(0.3)
+                            
+                            # Get or create post_discharge_status
+                            stmt = select(PostDischargeStatus).where(
+                                PostDischargeStatus.patient_id == self.patient_id
+                            )
+                            result = await db.execute(stmt)
+                            status_row = result.scalar_one_or_none()
+                            
+                            # Transform care_plan for post_discharge_statuses format
+                            # Note: state["care_plan"]["tasks"] uses "description" field (from orchestrator tool conversion)
+                            care_plan_data = {
+                                "tasks": [
+                                    {
+                                        "task": task.get("description", "Task"),  # Use "description" from orchestrator tool format
+                                        "status": task.get("status", "pending").lower()
+                                    }
+                                    for task in care_plan.get("tasks", [])
+                                ],
+                                "status": "on_track" if current_state.get("risk_level") in ("LOW", "MODERATE") else "at_risk"
+                            }
+                            
+                            # Transform follow_up
+                            follow_up_output = current_state.get("follow_up_output", {})
+                            follow_up_data = {
+                                "last_checkin": follow_up_output.get("created_at", ""),
+                                "next_checkin": follow_up_output.get("next_checkin", ""),
+                                "is_scheduled": True
+                            }
+                            
+                            # Transform response_analyser (use care plan info for now)
+                            response_analyser_data = {
+                                "key_info": {
+                                    "care_plan_id": current_state.get("care_plan_id", ""),
+                                    "risk_level": current_state.get("risk_level", ""),
+                                    "intensity": current_state.get("intensity", ""),
+                                    "total_tasks": len(care_plan.get("tasks", []))
+                                }
+                            }
+                            
+                            if status_row:
+                                # Update existing
+                                status_row.care_plan = care_plan_data
+                                status_row.follow_up = follow_up_data
+                                status_row.response_analyser = response_analyser_data
+                                status_row.appointment = appointment_data
+                                logger.info(f"✓ Updated post_discharge_statuses for patient {self.patient_id}")
+                            else:
+                                # Create new
+                                status_row = PostDischargeStatus(
+                                    patient_id=self.patient_id,
+                                    care_plan=care_plan_data,
+                                    follow_up=follow_up_data,
+                                    response_analyser=response_analyser_data,
+                                    appointment=appointment_data
+                                )
+                                db.add(status_row)
+                                logger.info(f"✓ Created post_discharge_statuses for patient {self.patient_id}")
+                            
+                            await db.commit()
+                            
+                            yield self._event("notification", {
+                                "message": "✅ Care manager dashboard updated",
+                                "synced": True
+                            })
+                            await asyncio.sleep(0.3)
+                        except Exception as sync_err:
+                            logger.error(f"Failed to sync post_discharge_statuses: {sync_err}", exc_info=True)
+                            yield self._event("llm_chunk", {
+                                "agent": "system",
+                                "text": f"⚠️ Dashboard sync warning (non-critical): {str(sync_err)}"
+                            })
+                            await asyncio.sleep(0.3)
                     
                     yield self._event("complete", {
                         "message": "Care plan generated successfully!",

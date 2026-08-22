@@ -298,7 +298,7 @@ def run_care_plan_agent(input_data: ReadmissionInput) -> CarePlanOutput:
                 task_id=task["task_id"],
                 task_type=task["task_type"],
                 status=task["status"],
-                description=task.get("description"),
+                description=task.get("task_description"),  # Use task_description consistently
                 doctor_instruction=task.get("doctor_instruction")
                 # Note: No personalization for existing tasks in reused plans
                 # Personalization only happens during new plan creation
@@ -402,8 +402,7 @@ def run_care_plan_agent(input_data: ReadmissionInput) -> CarePlanOutput:
             updated_task = CarePlanTaskRepository.update_task(
                 task["task_id"],
                 {
-                    "description": final_description,
-                    "doctor_instruction": doctor_instruction
+                    "task_description": final_description
                 }
             )
         else:
@@ -411,8 +410,7 @@ def run_care_plan_agent(input_data: ReadmissionInput) -> CarePlanOutput:
             updated_task = CarePlanTaskRepository.update_task(
                 task["task_id"],
                 {
-                    "description": final_description,
-                    "doctor_instruction": None
+                    "task_description": final_description
                 }
             )
         
@@ -420,7 +418,7 @@ def run_care_plan_agent(input_data: ReadmissionInput) -> CarePlanOutput:
             task_id=updated_task["task_id"],
             task_type=updated_task["task_type"],
             status=updated_task["status"],
-            description=updated_task.get("description"),
+            description=updated_task.get("task_description"),  # Use task_description consistently
             doctor_instruction=updated_task.get("doctor_instruction")
         )
         care_tasks.append(care_task)

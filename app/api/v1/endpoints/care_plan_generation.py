@@ -178,13 +178,17 @@ async def send_care_plan_to_patient(
         
         notification_count = 0
         for idx, task in enumerate(tasks):
-            if task.get("status") == "pending":
+            if task.get("status") in ["pending", "PENDING", "IN_PROGRESS"]:
+                # Use task_description consistently (from care plan generation)
+                # The task dict comes from post_discharge_statuses.care_plan which stores it as "task"
+                task_text = task.get("task", "Care plan task")
+                
                 # Create initial reminder notification
                 await generate_task_reminder(
                     db=db,
                     patient_id=patient_id,
                     task_index=idx,
-                    task_text=task["task"],
+                    task_text=task_text,
                     scheduled_for=None  # Immediate notification
                 )
                 notification_count += 1

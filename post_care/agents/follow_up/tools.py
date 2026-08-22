@@ -69,7 +69,7 @@ class FollowUpCheckInRepository:
             
             # Verify task exists and get care_plan_id
             cursor.execute(
-                "SELECT task_id, care_plan_id FROM care_plan_tasks WHERE task_id = %s",
+                "SELECT id, care_plan_id FROM care_plan_tasks WHERE id = %s",
                 (task_id,)
             )
             
@@ -86,11 +86,11 @@ class FollowUpCheckInRepository:
             cursor.execute(
                 """
                 INSERT INTO follow_up_checkins 
-                (checkin_id, task_id, checkin_type, scheduled_at, channel, status, message, created_at, updated_at)
+                (id, care_plan_id, task_id, checkin_type, scheduled_at, status, checkin_message, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                RETURNING checkin_id, task_id, checkin_type, scheduled_at, channel, status, message, created_at
+                RETURNING id, task_id, checkin_type, scheduled_at, status, checkin_message, created_at
                 """,
-                (checkin_id, task_id, checkin_type, scheduled_at, "placeholder", "SCHEDULED", message)
+                (checkin_id, care_plan_id, task_id, checkin_type, scheduled_at, "SCHEDULED", message)
             )
             
             result = cursor.fetchone()
@@ -101,12 +101,12 @@ class FollowUpCheckInRepository:
                 "task_id": result[1],
                 "checkin_type": result[2],
                 "scheduled_at": result[3].isoformat() if result[3] else None,
-                "channel": result[4],
-                "status": result[5],
-                "message": result[6],
+                "channel": "notification",  # Default channel
+                "status": result[4],
+                "message": result[5],
                 "response": None,
                 "response_received_at": None,
-                "created_at": result[7].isoformat() if result[7] else None
+                "created_at": result[6].isoformat() if result[6] else None
             }
         
         except Exception as e:
@@ -133,9 +133,9 @@ class FollowUpCheckInRepository:
             
             cursor.execute(
                 """
-                SELECT checkin_id, task_id, checkin_type, scheduled_at, channel, status, message, response, response_received_at, created_at, updated_at
+                SELECT id, task_id, checkin_type, scheduled_at, status, checkin_message, patient_response, response_received_at, created_at, updated_at
                 FROM follow_up_checkins
-                WHERE checkin_id = %s
+                WHERE id = %s
                 """,
                 (checkin_id,)
             )
@@ -150,13 +150,13 @@ class FollowUpCheckInRepository:
                 "task_id": result[1],
                 "checkin_type": result[2],
                 "scheduled_at": result[3].isoformat() if result[3] else None,
-                "channel": result[4],
-                "status": result[5],
-                "message": result[6],
-                "response": result[7],
-                "response_received_at": result[8].isoformat() if result[8] else None,
-                "created_at": result[9].isoformat() if result[9] else None,
-                "updated_at": result[10].isoformat() if result[10] else None
+                "channel": "notification",  # Default channel
+                "status": result[4],
+                "message": result[5],
+                "response": result[6],
+                "response_received_at": result[7].isoformat() if result[7] else None,
+                "created_at": result[8].isoformat() if result[8] else None,
+                "updated_at": result[9].isoformat() if result[9] else None
             }
         
         finally:
@@ -179,7 +179,7 @@ class FollowUpCheckInRepository:
             
             cursor.execute(
                 """
-                SELECT checkin_id, task_id, checkin_type, scheduled_at, channel, status, message, response, response_received_at, created_at, updated_at
+                SELECT id, task_id, checkin_type, scheduled_at, status, checkin_message, patient_response, response_received_at, created_at, updated_at
                 FROM follow_up_checkins
                 WHERE task_id = %s
                 ORDER BY created_at ASC
@@ -196,13 +196,13 @@ class FollowUpCheckInRepository:
                     "task_id": result[1],
                     "checkin_type": result[2],
                     "scheduled_at": result[3].isoformat() if result[3] else None,
-                    "channel": result[4],
-                    "status": result[5],
-                    "message": result[6],
-                    "response": result[7],
-                    "response_received_at": result[8].isoformat() if result[8] else None,
-                    "created_at": result[9].isoformat() if result[9] else None,
-                    "updated_at": result[10].isoformat() if result[10] else None
+                    "channel": "notification",  # Default channel
+                    "status": result[4],
+                    "message": result[5],
+                    "response": result[6],
+                    "response_received_at": result[7].isoformat() if result[7] else None,
+                    "created_at": result[8].isoformat() if result[8] else None,
+                    "updated_at": result[9].isoformat() if result[9] else None
                 })
             
             return checkins
@@ -310,6 +310,34 @@ def get_active_care_plan(mrn: str) -> Optional[Dict[str, Any]]:
     return care_plan
 
 
+def get_active_care_plan_by_id(care_plan_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve an ACTIVE care plan by its ID from PostgreSQL.
+    
+    Args:
+        care_plan_id: Care plan identifier
+    
+    Returns:
+        Care plan with tasks if found and ACTIVE, None otherwise
+    
+    Raises:
+        ValueError: If care_plan_id is empty
+    """
+    if not care_plan_id or not care_plan_id.strip():
+        raise ValueError("care_plan_id cannot be empty")
+    
+    care_plan = CarePlanRepository.get_care_plan_by_id(care_plan_id)
+    
+    if not care_plan or care_plan.get("status") != "ACTIVE":
+        return None
+    
+    # Fetch associated tasks
+    tasks = CarePlanTaskRepository.get_tasks_by_care_plan(care_plan_id)
+    care_plan["tasks"] = tasks
+    
+    return care_plan
+
+
 # ============================================================================
 # TOOL 2: GET PLAN TASKS
 # ============================================================================
@@ -370,7 +398,7 @@ def get_pending_tasks(care_plan_id: str) -> List[Dict[str, Any]]:
         
         cursor.execute(
             """
-            SELECT task_id, care_plan_id, task_type, status, description, doctor_instruction, created_at, updated_at
+            SELECT id, care_plan_id, task_type, status, task_description, doctor_instruction, created_at, updated_at
             FROM care_plan_tasks
             WHERE care_plan_id = %s AND status IN ('PENDING', 'IN_PROGRESS')
             ORDER BY created_at ASC
@@ -387,7 +415,7 @@ def get_pending_tasks(care_plan_id: str) -> List[Dict[str, Any]]:
                 "care_plan_id": result[1],
                 "task_type": result[2],
                 "status": result[3],
-                "description": result[4],
+                "task_description": result[4],  # Use consistent field name
                 "doctor_instruction": result[5],
                 "created_at": result[6].isoformat() if result[6] else None,
                 "updated_at": result[7].isoformat() if result[7] else None
@@ -425,9 +453,9 @@ def get_task(task_id: str) -> Dict[str, Any]:
         
         cursor.execute(
             """
-            SELECT task_id, care_plan_id, task_type, status, description, doctor_instruction, created_at, updated_at
+            SELECT id, care_plan_id, task_type, status, task_description, doctor_instruction, created_at, updated_at
             FROM care_plan_tasks
-            WHERE task_id = %s
+            WHERE id = %s
             """,
             (task_id,)
         )
@@ -442,7 +470,7 @@ def get_task(task_id: str) -> Dict[str, Any]:
             "care_plan_id": result[1],
             "task_type": result[2],
             "status": result[3],
-            "description": result[4],
+            "task_description": result[4],  # Use consistent field name
             "doctor_instruction": result[5],
             "created_at": result[6].isoformat() if result[6] else None,
             "updated_at": result[7].isoformat() if result[7] else None

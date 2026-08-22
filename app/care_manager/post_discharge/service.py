@@ -48,81 +48,28 @@ async def get_post_discharge_status(patient_id: str, db: AsyncSession) -> PostDi
     )
     status_row = (await db.execute(status_query)).scalars().first()
 
+    # DO NOT auto-create baseline data — only show data after Generate Care Plan is clicked
     if status_row is None:
-        now = datetime.now(timezone.utc)
-        next_checkin_dt = patient.follow_up_appointment_date or (now + timedelta(days=2))
-        next_checkin_str = str(next_checkin_dt)
-
-        # Generate realistic care plan tasks based on EHR condition flags & clinical notes
-        tasks = []
-        if patient.active_medication_count and patient.active_medication_count > 0:
-            tasks.append({"task": f"Take prescribed medications ({patient.active_medication_count} active)", "status": "pending"})
-        if patient.hypertension_flag or (patient.systolic_bp and patient.systolic_bp > 140):
-            tasks.append({"task": "Monitor blood pressure morning & evening", "status": "pending"})
-        if patient.diabetes_flag or (patient.hba1c and patient.hba1c > 7.0):
-            tasks.append({"task": "Check blood glucose levels daily", "status": "pending"})
-        if patient.heart_failure_flag:
-            tasks.append({"task": "Record daily weight & check for ankle swelling", "status": "pending"})
-        if patient.copd_asthma_flag:
-            tasks.append({"task": "Use maintenance inhaler as prescribed", "status": "pending"})
-        
-        # Add follow-up task
-        tasks.append({"task": f"Attend post-discharge follow-up appointment ({patient.discharge_destination or 'home'})", "status": "pending"})
-
-        # Determine Care Plan Status
-        adherence = patient.medication_adherence_rate if patient.medication_adherence_rate is not None else 100.0
-        comorbidities = patient.charlson_comorbidity_index or 0
-        if adherence < 75.0 or comorbidities >= 5 or patient.prior_30_day_readmission_flag == 1:
-            care_plan_status = "at_risk"
-        else:
-            care_plan_status = "on_track"
-
-        care_plan_data = {
-            "tasks": tasks,
-            "status": care_plan_status,
-        }
-        
-        follow_up_data = {
-            "last_checkin": (patient.discharge_date or now.date()).isoformat(),
-            "next_checkin": next_checkin_str,
-            "is_scheduled": bool(patient.follow_up_within_7_days_flag or patient.follow_up_appointment_date),
-        }
-        
-        # Triage flag assessment based on clinical metrics (with None checks)
-        if ((patient.systolic_bp and patient.systolic_bp > 160) or 
-            (patient.spo2 and patient.spo2 < 92) or 
-            (patient.pain_score_clinical and patient.pain_score_clinical >= 7.0)):
-            triage_flag = "HIGH_RISK"
-        elif care_plan_status == "at_risk":
-            triage_flag = "ATTENTION_REQUIRED"
-        else:
-            triage_flag = "NORMAL"
-
-        response_analyser_data = {
-            "key_info": {
-                "reported_symptoms": patient.clinical_notes or "Post-discharge recovery",
-                "adherence_rate": f"{adherence:.0f}%",
-                "triage_flag": triage_flag,
-                "discharge_destination": patient.discharge_destination or "home",
-                "readmission_history": f"{patient.previous_admissions_12m or 0} admissions in past 12m"
-            }
-        }
-        
-        appointment_data = {
-            "is_appointment": bool(patient.follow_up_appointment_date or patient.follow_up_within_7_days_flag),
-            "date": str(patient.follow_up_appointment_date) if patient.follow_up_appointment_date else next_checkin_str,
-        }
-
-        status_row = PostDischargeStatus(
+        # Return empty status indicating no care plan generated yet
+        return PostDischargeStatusOut(
             patient_id=pid,
-            care_plan=care_plan_data,
-            follow_up=follow_up_data,
-            response_analyser=response_analyser_data,
-            appointment=appointment_data,
+            care_plan=CarePlanAgentStatus(
+                tasks=[],
+                status="not_generated"
+            ),
+            follow_up=FollowUpAgentStatus(
+                last_checkin=None,
+                next_checkin=None,
+                is_scheduled=False
+            ),
+            response_analyser=ResponseAnalyserAgentStatus(
+                key_info={}
+            ),
+            appointment=AppointmentAgentStatus(
+                is_appointment=False,
+                date=None
+            ),
         )
-        db.add(status_row)
-        await db.commit()
-        await db.refresh(status_row)
 
     return PostDischargeStatusOut(
         patient_id=pid,

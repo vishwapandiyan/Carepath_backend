@@ -28,7 +28,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select as sql_select
 
 from app.core.security import get_current_patient
 from app.db.base import get_db
@@ -106,7 +106,10 @@ async def submit_patient_response(
     5. Return the structured analysis
     """
 
-    logger.info(f"Patient response received for patient_id={patient_id}")
+    logger.info(f"🔵 PATIENT RESPONSE - Request received")
+    logger.info(f"   Patient ID: {patient_id}")
+    logger.info(f"   Response Text: {request.patient_response[:100]}...")
+    logger.info(f"   Check-in ID: {request.checkin_id or 'Auto-detect'}")
 
     # ── 1. Verify patient identity ─────────────────────────────────────────
     if current_user.patient_id != patient_id:
@@ -115,7 +118,8 @@ async def submit_patient_response(
     # ── 2. Load patient EHR and active care plan context ───────────────────
     try:
         from app.models.ehr import PatientEHR
-        stmt = select(PatientEHR).where(PatientEHR.patient_id == patient_id)
+        
+        stmt = sql_select(PatientEHR).where(PatientEHR.patient_id == patient_id)
         result = await db.execute(stmt)
         patient_ehr = result.scalar_one_or_none()
 
@@ -146,7 +150,7 @@ async def submit_patient_response(
 
         # Find active care plan for this MRN
         cursor.execute(
-            "SELECT care_plan_id, risk_level, intensity, doctor_instructions FROM care_plans WHERE mrn = %s AND status = 'ACTIVE' LIMIT 1",
+            "SELECT id, risk_level, intensity, doctor_instructions FROM care_plans WHERE mrn = %s AND status = 'ACTIVE' LIMIT 1",
             (mrn,)
         )
         plan_row = cursor.fetchone()
@@ -161,16 +165,16 @@ async def submit_patient_response(
         # Find the relevant check-in
         if request.checkin_id:
             cursor.execute(
-                "SELECT checkin_id, task_id, checkin_type, message FROM follow_up_checkins WHERE checkin_id = %s",
+                "SELECT id, task_id, checkin_type, checkin_message FROM follow_up_checkins WHERE id = %s",
                 (request.checkin_id,)
             )
         else:
             # Use the most recent scheduled check-in for this care plan's tasks
             cursor.execute(
                 """
-                SELECT fc.checkin_id, fc.task_id, fc.checkin_type, fc.message
+                SELECT fc.id, fc.task_id, fc.checkin_type, fc.checkin_message
                 FROM follow_up_checkins fc
-                JOIN care_plan_tasks cpt ON fc.task_id = cpt.task_id
+                JOIN care_plan_tasks cpt ON fc.task_id = cpt.id
                 WHERE cpt.care_plan_id = %s AND fc.status IN ('SCHEDULED', 'SENT')
                 ORDER BY fc.created_at DESC
                 LIMIT 1
@@ -188,7 +192,7 @@ async def submit_patient_response(
         else:
             # No check-in found — use first pending task as context
             cursor.execute(
-                "SELECT task_id, task_type, description FROM care_plan_tasks WHERE care_plan_id = %s AND status IN ('PENDING', 'IN_PROGRESS') ORDER BY created_at LIMIT 1",
+                "SELECT id, task_type, task_description FROM care_plan_tasks WHERE care_plan_id = %s AND status IN ('PENDING', 'IN_PROGRESS') ORDER BY created_at LIMIT 1",
                 (care_plan_id,)
             )
             task_row = cursor.fetchone()
@@ -206,7 +210,7 @@ async def submit_patient_response(
         # Store patient response in the check-in record (if it exists)
         if checkin_id and checkin_id != "DIRECT_RESPONSE":
             cursor.execute(
-                "UPDATE follow_up_checkins SET response = %s, status = 'RESPONSE_RECEIVED', response_received_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE checkin_id = %s",
+                "UPDATE follow_up_checkins SET patient_response = %s, status = 'RESPONDED', response_received_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
                 (request.patient_response, checkin_id)
             )
             conn.commit()
@@ -216,7 +220,11 @@ async def submit_patient_response(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to load care plan context: {e}", exc_info=True)
+        logger.error(f"❌ PATIENT RESPONSE ERROR - Failed to load care plan context")
+        logger.error(f"   Patient: {patient_id}, MRN: {mrn if 'mrn' in locals() else 'N/A'}")
+        logger.error(f"   Error Type: {type(e).__name__}")
+        logger.error(f"   Error Message: {str(e)}")
+        logger.error(f"   Full Traceback:", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to load care plan context: {str(e)}")
 
     # ── 4. Call Response Analyzer Agent ────────────────────────────────────
@@ -322,6 +330,62 @@ async def submit_patient_response(
                     follow_up_output = orchestrate_follow_up(follow_up_input)
                     logger.info(f"Follow-up re-executed: task={follow_up_output.follow_up.get('task_id') if follow_up_output.follow_up else None}")
 
+                    # CRITICAL FIX: Sync revised plan to post_discharge_statuses
+                    try:
+                        from app.db.models import PostDischargeStatus
+                        
+                        stmt = sql_select(PostDischargeStatus).where(
+                            PostDischargeStatus.patient_id == patient_id
+                        )
+                        result = await db.execute(stmt)
+                        status_row = result.scalar_one_or_none()
+                        
+                        if status_row:
+                            # Transform revised plan for post_discharge_statuses format
+                            care_plan_data = {
+                                "tasks": [
+                                    {
+                                        "task": t.get("description") or t.get("task_type", "Task"),
+                                        "status": t.get("status", "pending").lower()
+                                    }
+                                    for t in revised_tasks
+                                ],
+                                "status": "at_risk" if continuity_action == "URGENT_REVIEW" else "attention_needed"
+                            }
+                            
+                            # Update with response analysis
+                            response_analyser_data = {
+                                "key_info": {
+                                    "classification": analyzer_output.classification,
+                                    "summary": analyzer_output.summary or "",
+                                    "confidence": analyzer_output.confidence,
+                                    "concerns": ", ".join(analyzer_output.concerns or []),
+                                    "triage_flag": "HIGH_RISK" if continuity_action == "URGENT_REVIEW" else "ATTENTION_REQUIRED",
+                                    "last_response": request.patient_response[:100] + "..." if len(request.patient_response) > 100 else request.patient_response
+                                }
+                            }
+                            
+                            # Update appointment status if needed
+                            if requires_appointment:
+                                appointment_data = {
+                                    "is_appointment": True,
+                                    "status": "pending_scheduling",
+                                    "urgency": "urgent" if continuity_action == "URGENT_REVIEW" else "routine"
+                                }
+                                status_row.appointment = appointment_data
+                            
+                            status_row.care_plan = care_plan_data
+                            status_row.response_analyser = response_analyser_data
+                            
+                            await db.commit()
+                            logger.info(f"✓ Synced revised plan to post_discharge_statuses for patient {patient_id}")
+                        else:
+                            logger.warning(f"No post_discharge_status found for patient {patient_id}, skipping sync")
+                    
+                    except Exception as sync_err:
+                        logger.error(f"Failed to sync revised plan to post_discharge_statuses: {sync_err}", exc_info=True)
+                        # Non-fatal, continue
+
                     # Trigger notification for the updated follow-up
                     try:
                         from app.services.notification_service import generate_task_reminder
@@ -387,11 +451,15 @@ async def submit_patient_response(
         )
 
     except Exception as e:
-        logger.error(f"Response Analyzer failed: {e}", exc_info=True)
+        logger.error(f"❌ PATIENT RESPONSE ERROR - Response Analyzer failed")
+        logger.error(f"   Patient: {patient_id}, Care Plan: {care_plan_id if 'care_plan_id' in locals() else 'N/A'}")
+        logger.error(f"   Error Type: {type(e).__name__}")
+        logger.error(f"   Error Message: {str(e)}")
+        logger.error(f"   Full Traceback:", exc_info=True)
         return PatientResponseResult(
             success=False,
-            care_plan_id=care_plan_id,
-            task_id=task_id,
-            checkin_id=checkin_id,
+            care_plan_id=care_plan_id if 'care_plan_id' in locals() else None,
+            task_id=task_id if 'task_id' in locals() else None,
+            checkin_id=checkin_id if 'checkin_id' in locals() else None,
             error=str(e),
         )
