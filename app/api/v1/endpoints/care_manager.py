@@ -1,8 +1,12 @@
 from fastapi import APIRouter, Depends
 from app.core.security import get_current_care_manager
 from app.models import User
+from app.api.v1.endpoints import care_plan_generation
 
 router = APIRouter()
+
+# Include care plan generation sub-router
+router.include_router(care_plan_generation.router, tags=["Care Plan Generation"])
 
 
 @router.get("/dashboard")

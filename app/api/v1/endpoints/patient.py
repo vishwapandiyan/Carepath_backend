@@ -419,3 +419,28 @@ async def get_latest_predictions_by_model(
             detail=f"Failed to retrieve latest predictions: {str(e)}"
         )
 
+
+
+# === Post-Discharge Care Plan Endpoint ===
+
+@router.get("/care-plan")
+async def get_my_care_plan(
+    current_user: User = Depends(get_current_patient),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Patient endpoint to view their own post-discharge care plan.
+    
+    **Purpose:** Get post-discharge monitoring status with care tasks and follow-ups.
+    
+    **Returns:**
+    - care_plan: Tasks list with status and progress
+    - follow_up: Next check-in schedule
+    - response_analyser: Key discharge info
+    - appointment: Appointment status
+    """
+    from app.care_manager.post_discharge.service import get_post_discharge_status
+    
+    logger.info(f"Care plan request from patient: {current_user.patient_id}")
+    
+    return await get_post_discharge_status(current_user.patient_id, db)

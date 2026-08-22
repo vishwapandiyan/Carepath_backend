@@ -57,7 +57,7 @@ async def get_post_discharge_status(patient_id: str, db: AsyncSession) -> PostDi
         tasks = []
         if patient.active_medication_count and patient.active_medication_count > 0:
             tasks.append({"task": f"Take prescribed medications ({patient.active_medication_count} active)", "status": "pending"})
-        if patient.hypertension_flag or patient.systolic_bp > 140:
+        if patient.hypertension_flag or (patient.systolic_bp and patient.systolic_bp > 140):
             tasks.append({"task": "Monitor blood pressure morning & evening", "status": "pending"})
         if patient.diabetes_flag or (patient.hba1c and patient.hba1c > 7.0):
             tasks.append({"task": "Check blood glucose levels daily", "status": "pending"})
@@ -88,8 +88,10 @@ async def get_post_discharge_status(patient_id: str, db: AsyncSession) -> PostDi
             "is_scheduled": bool(patient.follow_up_within_7_days_flag or patient.follow_up_appointment_date),
         }
         
-        # Triage flag assessment based on clinical metrics
-        if patient.systolic_bp > 160 or patient.spo2 < 92 or patient.pain_score_clinical >= 7.0:
+        # Triage flag assessment based on clinical metrics (with None checks)
+        if ((patient.systolic_bp and patient.systolic_bp > 160) or 
+            (patient.spo2 and patient.spo2 < 92) or 
+            (patient.pain_score_clinical and patient.pain_score_clinical >= 7.0)):
             triage_flag = "HIGH_RISK"
         elif care_plan_status == "at_risk":
             triage_flag = "ATTENTION_REQUIRED"

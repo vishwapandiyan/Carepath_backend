@@ -1,0 +1,7 @@
+psycopg2-binary==2.9.9
+pandas==2.0.3
+pydantic==2.4.2
+langgraph==0.0.30
+langchain==0.1.0
+python-dotenv==1.0.0
+pytest==7.4.3

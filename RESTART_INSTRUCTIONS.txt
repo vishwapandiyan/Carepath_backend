@@ -1,0 +1,60 @@
+====================================================================
+BACKEND SERVER RESTART INSTRUCTIONS - Fix Database Configuration
+====================================================================
+
+The backend server is still using old cached configuration (DB_USER=subitsha).
+You need to completely stop and restart it to pick up the new settings.
+
+STEP 1: STOP THE BACKEND SERVER
+---------------------------------
+1. Find the terminal where the backend is running
+2. Press Ctrl+C to stop it
+3. Wait for it to fully shut down
+
+STEP 2: CLEAR PYTHON CACHE
+---------------------------
+Run these commands in the backend directory:
+
+cd /Users/vishwa/Desktop/CarepathAI_backend
+find . -type d -name "__pycache__" -exec rm -r {} + 2>/dev/null || true
+find . -type f -name "*.pyc" -delete 2>/dev/null || true
+
+STEP 3: VERIFY CONFIGURATION
+-----------------------------
+Double-check the configuration files:
+
+# Check main backend .env
+grep "GROQ_API_KEY" .env
+# Should show: GROQ_API_KEY=<your_api_key>
+
+# Check post-care .env
+grep "DB_USER" post_care/.env
+# Should show: DB_USER=vishwa
+
+STEP 4: RESTART BACKEND SERVER
+-------------------------------
+python -m uvicorn app.main:app --reload --port 8000
+
+STEP 5: VERIFY IT'S WORKING
+----------------------------
+1. Wait for server to start (look for "Application startup complete")
+2. In the frontend, navigate to Care Manager dashboard
+3. Click on a patient
+4. Click "Generate Care Plan"
+5. Watch the modal - it should now work without database errors
+
+WHAT WAS FIXED:
+---------------
+✅ Added GROQ_API_KEY to main backend .env
+✅ Changed DB_USER from 'subitsha' to 'vishwa' in post_care/.env
+✅ Fixed frontend token retrieval (using 'cp_token')
+✅ Post-care agent is fully integrated with appointment bridge
+
+IF IT STILL FAILS:
+------------------
+1. Check server logs for any error messages
+2. Verify PostgreSQL is running: psql -U vishwa -d carepath_db -c "\dt"
+3. Check if user 'vishwa' exists in PostgreSQL
+4. Share the error logs
+
+====================================================================
