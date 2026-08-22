@@ -77,9 +77,12 @@ def get_available_tools(state: PostCareWorkflowState) -> List[str]:
     """
     available_tools = []
     
-    # Rule 1: care_plan_agent always available (entry point)
-    available_tools.append("call_care_plan_agent")
-    logger.debug("Guard rail: care_plan_agent AVAILABLE (always)")
+    # Rule 1: care_plan_agent only if no care plan exists yet (entry point)
+    if state.get("care_plan_id") is None:
+        available_tools.append("call_care_plan_agent")
+        logger.debug("Guard rail: care_plan_agent AVAILABLE (no plan yet)")
+    else:
+        logger.debug("Guard rail: care_plan_agent NOT available (plan already exists)")
     
     # Rule 2: follow_up_agent only if care_plan exists
     if state.get("care_plan_id") is not None:

@@ -99,6 +99,11 @@ def call_care_plan_agent(
     try:
         logger.info(f"Tool: call_care_plan_agent - mrn={mrn}")
         
+        # Fix LLM argument misinterpretation: if probability > 1, normalize to 0-1 range
+        if probability > 1.0:
+            probability = probability / 100.0
+        probability = max(0.0, min(1.0, probability))
+        
         # Validate input
         input_data = ReadmissionInput(
             mrn=mrn,

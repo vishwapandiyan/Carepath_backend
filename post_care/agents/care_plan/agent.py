@@ -402,8 +402,8 @@ def run_care_plan_agent(input_data: ReadmissionInput) -> CarePlanOutput:
             updated_task = CarePlanTaskRepository.update_task(
                 task["task_id"],
                 {
-                    "task_description": final_description,
-                    "task_details": doctor_instruction
+                    "description": final_description,
+                    "doctor_instruction": doctor_instruction
                 }
             )
         else:
@@ -411,8 +411,8 @@ def run_care_plan_agent(input_data: ReadmissionInput) -> CarePlanOutput:
             updated_task = CarePlanTaskRepository.update_task(
                 task["task_id"],
                 {
-                    "task_description": final_description,
-                    "task_details": None
+                    "description": final_description,
+                    "doctor_instruction": None
                 }
             )
         
@@ -420,8 +420,8 @@ def run_care_plan_agent(input_data: ReadmissionInput) -> CarePlanOutput:
             task_id=updated_task["task_id"],
             task_type=updated_task["task_type"],
             status=updated_task["status"],
-            description=updated_task.get("description", updated_task.get("task_description")),
-            doctor_instruction=updated_task.get("doctor_instruction", updated_task.get("task_details"))
+            description=updated_task.get("description"),
+            doctor_instruction=updated_task.get("doctor_instruction")
         )
         care_tasks.append(care_task)
     

@@ -439,8 +439,8 @@ def get_continuity_action(classification: str) -> dict:
         "CONCERN": {
             "continuity_action": "CLINICAL_REVIEW",
             "requires_human_review": True,
-            "requires_appointment": True,
-            "reason": "Patient response contains potentially concerning symptoms. Requires clinical review and appointment scheduling.",
+            "requires_appointment": False,
+            "reason": "Patient response contains potentially concerning symptoms. Flagged for clinical review. Continue monitoring.",
         },
         "URGENT": {
             "continuity_action": "URGENT_REVIEW",
