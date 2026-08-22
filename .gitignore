@@ -39,3 +39,6 @@ logs/
 *.log
 *.xls
 .env
+ML_Complete_Package/
+datasets/
+.env
