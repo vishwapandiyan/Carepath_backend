@@ -742,6 +742,13 @@ async def chat(
     known_providers = session.get("provider_candidates") or []
     known_slots = session.get("available_slots") or []
 
+    # Source-awareness: log the session origin
+    session_source = session.get("source", "PATIENT")
+    logger.info(
+        "chat: resuming session %s (source=%s, mrn=%s)",
+        request.recommendation_id, session_source, session.get("mrn"),
+    )
+
     try:
         result = continue_appointment_agent(
             conversation_state=conversation_state,

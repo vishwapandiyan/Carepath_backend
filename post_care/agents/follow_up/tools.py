@@ -69,7 +69,7 @@ class FollowUpCheckInRepository:
             
             # Verify task exists and get care_plan_id
             cursor.execute(
-                "SELECT id, care_plan_id FROM care_plan_tasks WHERE id = %s",
+                "SELECT task_id, care_plan_id FROM care_plan_tasks WHERE task_id = %s",
                 (task_id,)
             )
             
@@ -82,15 +82,15 @@ class FollowUpCheckInRepository:
             # Generate unique check-in ID
             checkin_id = f"CHK-{uuid.uuid4().hex[:8].upper()}"
             
-            # Insert check-in with care_plan_id
+            # Insert check-in
             cursor.execute(
                 """
                 INSERT INTO follow_up_checkins 
-                (id, care_plan_id, task_id, checkin_type, scheduled_at, status, checkin_message, created_at, updated_at)
+                (checkin_id, task_id, checkin_type, scheduled_at, channel, status, message, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                RETURNING id, care_plan_id, task_id, checkin_type, scheduled_at, status, checkin_message, created_at
+                RETURNING checkin_id, task_id, checkin_type, scheduled_at, channel, status, message, created_at
                 """,
-                (checkin_id, care_plan_id, task_id, checkin_type, scheduled_at, "SCHEDULED", message)
+                (checkin_id, task_id, checkin_type, scheduled_at, "placeholder", "SCHEDULED", message)
             )
             
             result = cursor.fetchone()
@@ -98,11 +98,10 @@ class FollowUpCheckInRepository:
             
             return {
                 "checkin_id": result[0],
-                "care_plan_id": result[1],
-                "task_id": result[2],
-                "checkin_type": result[3],
-                "scheduled_at": result[4].isoformat() if result[4] else None,
-                "channel": None,  # Not in new schema
+                "task_id": result[1],
+                "checkin_type": result[2],
+                "scheduled_at": result[3].isoformat() if result[3] else None,
+                "channel": result[4],
                 "status": result[5],
                 "message": result[6],
                 "response": None,
@@ -134,9 +133,9 @@ class FollowUpCheckInRepository:
             
             cursor.execute(
                 """
-                SELECT id, care_plan_id, task_id, checkin_type, scheduled_at, status, checkin_message, patient_response, response_received_at, created_at, updated_at
+                SELECT checkin_id, task_id, checkin_type, scheduled_at, channel, status, message, response, response_received_at, created_at, updated_at
                 FROM follow_up_checkins
-                WHERE id = %s
+                WHERE checkin_id = %s
                 """,
                 (checkin_id,)
             )
@@ -148,11 +147,10 @@ class FollowUpCheckInRepository:
             
             return {
                 "checkin_id": result[0],
-                "care_plan_id": result[1],
-                "task_id": result[2],
-                "checkin_type": result[3],
-                "scheduled_at": result[4].isoformat() if result[4] else None,
-                "channel": None,  # Not in new schema
+                "task_id": result[1],
+                "checkin_type": result[2],
+                "scheduled_at": result[3].isoformat() if result[3] else None,
+                "channel": result[4],
                 "status": result[5],
                 "message": result[6],
                 "response": result[7],
@@ -181,7 +179,7 @@ class FollowUpCheckInRepository:
             
             cursor.execute(
                 """
-                SELECT id, task_id, checkin_type, scheduled_at, status, checkin_message, patient_response, response_received_at, created_at, updated_at
+                SELECT checkin_id, task_id, checkin_type, scheduled_at, channel, status, message, response, response_received_at, created_at, updated_at
                 FROM follow_up_checkins
                 WHERE task_id = %s
                 ORDER BY created_at ASC
@@ -198,13 +196,13 @@ class FollowUpCheckInRepository:
                     "task_id": result[1],
                     "checkin_type": result[2],
                     "scheduled_at": result[3].isoformat() if result[3] else None,
-                    "channel": None,  # Not in new schema
-                    "status": result[4],
-                    "message": result[5],
-                    "response": result[6],
-                    "response_received_at": result[7].isoformat() if result[7] else None,
-                    "created_at": result[8].isoformat() if result[8] else None,
-                    "updated_at": result[9].isoformat() if result[9] else None
+                    "channel": result[4],
+                    "status": result[5],
+                    "message": result[6],
+                    "response": result[7],
+                    "response_received_at": result[8].isoformat() if result[8] else None,
+                    "created_at": result[9].isoformat() if result[9] else None,
+                    "updated_at": result[10].isoformat() if result[10] else None
                 })
             
             return checkins
@@ -244,8 +242,8 @@ class FollowUpCheckInRepository:
                 f"""
                 UPDATE follow_up_checkins
                 SET {set_clause}
-                WHERE id = %s
-                RETURNING id, care_plan_id, task_id, checkin_type, scheduled_at, status, checkin_message, patient_response, response_received_at, created_at, updated_at
+                WHERE checkin_id = %s
+                RETURNING checkin_id, task_id, checkin_type, scheduled_at, channel, status, message, response, response_received_at, created_at, updated_at
                 """,
                 values
             )
@@ -372,7 +370,7 @@ def get_pending_tasks(care_plan_id: str) -> List[Dict[str, Any]]:
         
         cursor.execute(
             """
-            SELECT id, care_plan_id, task_type, status, task_description, task_details, created_at, updated_at
+            SELECT task_id, care_plan_id, task_type, status, description, doctor_instruction, created_at, updated_at
             FROM care_plan_tasks
             WHERE care_plan_id = %s AND status IN ('PENDING', 'IN_PROGRESS')
             ORDER BY created_at ASC
@@ -427,9 +425,9 @@ def get_task(task_id: str) -> Dict[str, Any]:
         
         cursor.execute(
             """
-            SELECT id, care_plan_id, task_type, status, task_description, task_details, created_at, updated_at
+            SELECT task_id, care_plan_id, task_type, status, description, doctor_instruction, created_at, updated_at
             FROM care_plan_tasks
-            WHERE id = %s
+            WHERE task_id = %s
             """,
             (task_id,)
         )
@@ -657,7 +655,7 @@ def get_task_checkins(task_id: str) -> List[Dict[str, Any]]:
         cursor = conn.cursor()
         
         cursor.execute(
-            "SELECT id FROM care_plan_tasks WHERE id = %s",
+            "SELECT task_id FROM care_plan_tasks WHERE task_id = %s",
             (task_id,)
         )
         

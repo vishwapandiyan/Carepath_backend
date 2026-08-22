@@ -129,7 +129,7 @@ class CarePlanRepository:
             
             cursor.execute(
                 """
-                SELECT id, patient_id, mrn, risk_level, intensity, status, doctor_instructions, created_at
+                SELECT care_plan_id, patient_id, mrn, risk_level, intensity, status, doctor_instructions, created_at
                 FROM care_plans
                 WHERE mrn = %s AND status = 'ACTIVE'
                 """,
@@ -173,9 +173,9 @@ class CarePlanRepository:
             
             cursor.execute(
                 """
-                SELECT id, patient_id, mrn, risk_level, intensity, status, doctor_instructions, created_at
+                SELECT care_plan_id, patient_id, mrn, risk_level, intensity, status, doctor_instructions, created_at
                 FROM care_plans
-                WHERE id = %s
+                WHERE care_plan_id = %s
                 """,
                 (care_plan_id,)
             )
@@ -229,8 +229,8 @@ class CarePlanRepository:
                 f"""
                 UPDATE care_plans
                 SET {set_clause}
-                WHERE id = %s
-                RETURNING id, patient_id, mrn, risk_level, intensity, status, doctor_instructions, created_at, updated_at
+                WHERE care_plan_id = %s
+                RETURNING care_plan_id, patient_id, mrn, risk_level, intensity, status, doctor_instructions, created_at, updated_at
                 """,
                 values
             )
@@ -300,7 +300,7 @@ class CarePlanTaskRepository:
             
             # Verify care plan exists
             cursor.execute(
-                "SELECT id FROM care_plans WHERE id = %s",
+                "SELECT care_plan_id FROM care_plans WHERE care_plan_id = %s",
                 (care_plan_id,)
             )
             
@@ -314,9 +314,9 @@ class CarePlanTaskRepository:
             cursor.execute(
                 """
                 INSERT INTO care_plan_tasks 
-                (id, care_plan_id, task_type, status, task_description, task_details, created_at, updated_at)
+                (task_id, care_plan_id, task_type, status, description, doctor_instruction, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                RETURNING id, care_plan_id, task_type, status, task_description, task_details, created_at
+                RETURNING task_id, care_plan_id, task_type, status, description, doctor_instruction, created_at
                 """,
                 (task_id, care_plan_id, task_type, status, description, doctor_instruction)
             )
@@ -330,7 +330,7 @@ class CarePlanTaskRepository:
                 "task_type": result[2],
                 "status": result[3],
                 "description": result[4],
-                "task_details": result[5],
+                "doctor_instruction": result[5],
                 "created_at": result[6].isoformat() if result[6] else None
             }
         
@@ -358,7 +358,7 @@ class CarePlanTaskRepository:
             
             cursor.execute(
                 """
-                SELECT id, care_plan_id, task_type, status, task_description, task_details, created_at, updated_at
+                SELECT task_id, care_plan_id, task_type, status, description, doctor_instruction, created_at, updated_at
                 FROM care_plan_tasks
                 WHERE care_plan_id = %s
                 ORDER BY created_at ASC
@@ -376,7 +376,7 @@ class CarePlanTaskRepository:
                     "task_type": result[2],
                     "status": result[3],
                     "description": result[4],
-                    "task_details": result[5],
+                    "doctor_instruction": result[5],
                     "created_at": result[6].isoformat() if result[6] else None,
                     "updated_at": result[7].isoformat() if result[7] else None
                 })
@@ -418,8 +418,8 @@ class CarePlanTaskRepository:
                 f"""
                 UPDATE care_plan_tasks
                 SET {set_clause}
-                WHERE id = %s
-                RETURNING id, care_plan_id, task_type, status, task_description, task_details, created_at, updated_at
+                WHERE task_id = %s
+                RETURNING task_id, care_plan_id, task_type, status, description, doctor_instruction, created_at, updated_at
                 """,
                 values
             )
@@ -437,7 +437,7 @@ class CarePlanTaskRepository:
                 "task_type": result[2],
                 "status": result[3],
                 "description": result[4],
-                "task_details": result[5],
+                "doctor_instruction": result[5],
                 "created_at": result[6].isoformat() if result[6] else None,
                 "updated_at": result[7].isoformat() if result[7] else None
             }
@@ -466,7 +466,7 @@ class CarePlanTaskRepository:
             
             cursor.execute(
                 """
-                SELECT id, care_plan_id, task_type, status, task_description, task_details, created_at, updated_at
+                SELECT task_id, care_plan_id, task_type, status, description, doctor_instruction, created_at, updated_at
                 FROM care_plan_tasks
                 WHERE care_plan_id = %s AND status = 'PENDING'
                 ORDER BY created_at ASC
@@ -486,7 +486,7 @@ class CarePlanTaskRepository:
                 "task_type": result[2],
                 "status": result[3],
                 "description": result[4],
-                "task_details": result[5],
+                "doctor_instruction": result[5],
                 "created_at": result[6].isoformat() if result[6] else None,
                 "updated_at": result[7].isoformat() if result[7] else None
             }

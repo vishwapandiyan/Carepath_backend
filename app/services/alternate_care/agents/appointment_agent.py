@@ -897,8 +897,11 @@ def execute_appointment_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, 
 # Appointment Agent LLM loop — provider search step
 # ===========================================================================
 
-_APPOINTMENT_SYSTEM_PROMPT = """\
+_APPOINTMENT_SYSTEM_PROMPT_PATIENT = """\
 You are a medical appointment assistant.
+
+This appointment session was initiated by the patient. Help the patient
+complete the appointment scheduling process.
 
 You have been given a navigation recommendation for a patient. Your job is to
 find nearby healthcare providers that match the recommended care destination,
@@ -924,98 +927,64 @@ conversation):
   - If the tool returns an error, explain the issue to the patient and suggest
     trying again later.
 
-STEP 2 — Provider selection (once a provider list already exists, whether
-from earlier in this same conversation or restored from a previous turn):
+STEP 2 — Provider selection (once a provider list already exists):
   Do NOT call search_nearby_providers again — a provider list is already
   available in this conversation's context.
-  Read the patient's message and determine which provider (from the list
-  already shown) they are referring to. Match on name, partial name, or
-  clear description — use your own judgement, not exact string matching.
-  When you have identified the provider with reasonable confidence, call
-  the select_provider tool with that provider's EXACT provider_id and
-  provider_name as they appeared in the earlier provider list. Do not
-  invent a provider_id that was not in the list.
-  If the patient's message is ambiguous (matches multiple providers or
-  none), ask a clarifying question instead of guessing.
-  After select_provider succeeds, confirm the selection back to the patient
-  in plain language (e.g. "Great, I've noted your preference for Dr. R
-  Bhaskaran.").
+  Read the patient's message and determine which provider they are referring to.
+  When identified, call select_provider with the EXACT provider_id and provider_name.
+  If ambiguous, ask a clarifying question.
 
 STEP 3 — Availability checking (after a provider has been selected):
-  Once the patient has selected a provider and confirmed it in Step 2,
-  watch for requests to see available appointment times. Examples:
-    - "Show me available appointments"
-    - "What times are open?"
-    - "When can I book?"
-    - "Do you have any slots next week?"
-  When the patient asks for availability, call the check_availability tool
-  using:
-    - provider_id: the EXACT provider_id from the select_provider call
-    - destination: the care destination from the navigation recommendation
-    - specialty: the specialist type if destination is SPECIALIST
-    - preferred_date / preferred_time: if the patient mentioned a date or time
-  After receiving the tool result with available slots:
-    - If slots are found, present them as a numbered list with times.
-      Example: "1. 2026-08-25 09:00 AM - 09:30 AM"
-    - If no slots are found, inform the patient that no availability was found
-      for this provider and suggest trying a different date or provider.
-    - If the tool returns an error, explain the issue to the patient.
+  When the patient asks for availability, call check_availability.
+  Present available slots as a numbered list.
 
-STEP 4 — Slot selection (once available slots have been shown in Step 3):
-  Watch for the patient picking a specific time. Examples:
-    - "I want the first available slot"
-    - "9:00 AM works for me"
-    - "The 10:30 one"
-  Read the patient's message and determine which slot (from the
-  available_slots list already shown) they are referring to. Match on
-  position ("first", "second"), time of day, or a clear description — use
-  your own judgement, not exact string matching.
-  When you have identified the slot with reasonable confidence, call the
-  select_slot tool with that slot's EXACT slot_id as it appeared in the
-  earlier available_slots list. Do not invent a slot_id that was not in
-  the list.
-  If the patient's message is ambiguous (matches multiple slots or none),
-  ask a clarifying question instead of guessing.
-  After select_slot succeeds, confirm the selection back to the patient in
-  plain language, restating the chosen time and provider, and ask if they
-  would like to book it. Example: "Great, you've selected 9:00 AM - 9:30
-  AM with Dr. R Bhaskaran. Would you like me to book this appointment?"
-  Do NOT book the appointment yourself in this step — wait for explicit
-  confirmation first (Step 5).
+STEP 4 — Slot selection (once available slots have been shown):
+  When the patient picks a slot, call select_slot with the EXACT slot_id.
+  Confirm the selection and ask if they want to book.
 
-STEP 5 — Booking (once a slot has been selected in Step 4):
-  Watch for the patient explicitly confirming they want to book. Examples:
-    - "Yes, book it"
-    - "Confirm"
-    - "Go ahead and book that"
-  Do NOT call book_appointment on a vague or ambiguous message — only when
-  the patient clearly confirms.
-  When confirmed, call the book_appointment tool using:
-    - provider_id: the EXACT provider_id from the earlier select_provider call
-    - slot_id: the EXACT slot_id from the earlier select_slot call
-    - patient_id: the patient's MRN from this conversation
-    - specialty: the specialist type if applicable
-  After receiving the tool result:
-    - If booking succeeded, confirm clearly to the patient, including the
-      real appointment_id and the booked time/provider. Example: "Your
-      appointment has been booked successfully with Dr. R Bhaskaran for
-      9:00 AM - 9:30 AM. Confirmation ID: APT-xxxxxxxx."
-    - If booking failed (e.g. the slot was taken by someone else), explain
-      the actual error to the patient and suggest selecting a different
-      slot. Do NOT claim the appointment was booked if the tool reports
-      failure.
+STEP 5 — Booking (after explicit confirmation):
+  Only call book_appointment when the patient explicitly confirms.
 
 CRITICAL RULES:
-- Do NOT label a provider as a specialist unless the tool result explicitly
-  confirms it. The tool already filters by verified specialty from OSM data.
-- Do NOT infer a provider's specialty from their name alone.
-- Be concise and helpful. Do not add information not present in the tool result
-  or the conversation so far.
-- Once availability has been shown, wait for the patient to select a slot or
-  ask for more options. Do NOT automatically book an appointment.
-- Only call book_appointment after the patient has explicitly confirmed.
-  Never call it proactively or on an ambiguous message.
+- Do NOT invent provider information.
+- Be concise and helpful.
+- Only book after explicit patient confirmation.
 """
+
+_APPOINTMENT_SYSTEM_PROMPT_POST_CARE = """\
+You are a medical appointment assistant.
+
+This appointment session was initiated by the Post-care care-management
+workflow. The care-management system has already determined the appointment
+intent based on clinical analysis. Use the supplied destination, specialty,
+urgency and reason to fulfill the scheduling request.
+
+Do NOT make medical decisions. Do NOT question the clinical determination.
+Do NOT ask what specialty or destination is needed — it has already been
+determined.
+
+Your job is to:
+1. Search for nearby providers matching the specified destination and specialty.
+2. Present the providers found.
+3. Help select an appropriate provider (prefer nearest for urgent cases).
+4. Check availability.
+5. Help select a slot.
+6. Book the appointment when confirmed.
+
+For IMMEDIATE urgency: prioritize the nearest available provider and earliest slot.
+For SAME_DAY urgency: prioritize same-day availability.
+For THIS_WEEK urgency: find availability within the next 7 days.
+For ROUTINE urgency: standard scheduling within 30 days.
+
+CRITICAL RULES:
+- Do NOT invent provider information.
+- Do NOT ask unnecessary questions already answered by the care management system.
+- Be concise and action-oriented.
+- Proceed directly to provider search using the supplied parameters.
+"""
+
+# Keep backward compatibility alias
+_APPOINTMENT_SYSTEM_PROMPT = _APPOINTMENT_SYSTEM_PROMPT_PATIENT
 
 MAX_APPOINTMENT_ITERATIONS = 5
 
@@ -1027,18 +996,48 @@ def _build_appointment_messages(
     longitude: float,
     radius_km: float = 15.0,
     specialty: Optional[str] = None,
+    source: str = "PATIENT",
+    appointment_urgency: Optional[str] = None,
+    reason: Optional[str] = None,
+    care_plan_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Build initial messages for the appointment agent loop."""
-    user_content = (
-        f"I have a navigation recommendation (ID: {recommendation_id}).\n"
-        f"Care destination: {destination}\n"
-        f"{'Specialty: ' + specialty if specialty else ''}\n"
-        f"Patient location: latitude={latitude}, longitude={longitude}\n"
-        f"Search radius: {radius_km} km\n\n"
-        f"Please find nearby providers for this care type."
-    )
+    """Build initial messages for the appointment agent loop.
+    
+    Source-aware: uses different system prompts and initial messages
+    for PATIENT vs POST_CARE sessions.
+    """
+    # Select system prompt based on source
+    if source == "POST_CARE":
+        system_prompt = _APPOINTMENT_SYSTEM_PROMPT_POST_CARE
+        urgency_text = f"Appointment urgency: {appointment_urgency}\n" if appointment_urgency else ""
+        reason_text = f"Reason: {reason}\n" if reason else ""
+        care_plan_text = f"Care plan: {care_plan_id}\n" if care_plan_id else ""
+        
+        user_content = (
+            f"[POST-CARE APPOINTMENT REQUEST]\n"
+            f"Source: POST_CARE (care-management workflow)\n"
+            f"Care destination: {destination}\n"
+            f"{'Specialty: ' + specialty + chr(10) if specialty else ''}"
+            f"{urgency_text}"
+            f"{reason_text}"
+            f"{care_plan_text}"
+            f"Patient location: latitude={latitude}, longitude={longitude}\n"
+            f"Search radius: {radius_km} km\n\n"
+            f"Find nearby {specialty or destination} providers and present options."
+        )
+    else:
+        system_prompt = _APPOINTMENT_SYSTEM_PROMPT_PATIENT
+        user_content = (
+            f"I have a navigation recommendation (ID: {recommendation_id}).\n"
+            f"Care destination: {destination}\n"
+            f"{'Specialty: ' + specialty if specialty else ''}\n"
+            f"Patient location: latitude={latitude}, longitude={longitude}\n"
+            f"Search radius: {radius_km} km\n\n"
+            f"Please find nearby providers for this care type."
+        )
+    
     return [
-        {"role": "system", "content": _APPOINTMENT_SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
 
@@ -1430,6 +1429,10 @@ def run_appointment_agent(
     radius_km: float = 15.0,
     specialty: Optional[str] = None,
     *,
+    source: str = "PATIENT",
+    appointment_urgency: Optional[str] = None,
+    reason: Optional[str] = None,
+    care_plan_id: Optional[str] = None,
     client: Optional[NvidiaClient] = None,
     max_iterations: int = MAX_APPOINTMENT_ITERATIONS,
 ) -> Dict[str, Any]:
@@ -1453,6 +1456,14 @@ def run_appointment_agent(
         Search radius in km. Default 15.0.
     specialty : str | None
         Specialist sub-type when destination is SPECIALIST.
+    source : str
+        Session source: "PATIENT" or "POST_CARE". Affects system prompt.
+    appointment_urgency : str | None
+        Urgency level for POST_CARE: ROUTINE, THIS_WEEK, SAME_DAY, IMMEDIATE.
+    reason : str | None
+        Clinical reason for POST_CARE appointment request.
+    care_plan_id : str | None
+        Post-care plan ID for traceability.
     client : NvidiaClient | None
         Optionally inject a pre-constructed NvidiaClient. When None,
         a new instance is created from environment variables.
@@ -1471,6 +1482,7 @@ def run_appointment_agent(
             "selected_provider_id": None,     # never set on Turn 1
             "selected_provider_name": None,   # never set on Turn 1
             "messages": list[dict],    # full conversation history — persist this
+            "source": str,             # echo back the source
         }
     """
     messages = _build_appointment_messages(
@@ -1480,18 +1492,24 @@ def run_appointment_agent(
         longitude=longitude,
         radius_km=radius_km,
         specialty=specialty,
+        source=source,
+        appointment_urgency=appointment_urgency,
+        reason=reason,
+        care_plan_id=care_plan_id,
     )
 
     logger.info(
-        "AppointmentAgent: starting loop (recommendation_id=%s destination=%s)",
-        recommendation_id, destination,
+        "AppointmentAgent: starting loop (recommendation_id=%s destination=%s source=%s)",
+        recommendation_id, destination, source,
     )
 
-    return _run_appointment_agent_loop(
+    result = _run_appointment_agent_loop(
         messages,
         client=client,
         max_iterations=max_iterations,
     )
+    result["source"] = source
+    return result
 
 
 def continue_appointment_agent(

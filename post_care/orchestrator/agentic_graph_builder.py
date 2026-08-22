@@ -84,6 +84,10 @@ def complete_node(state: PostCareWorkflowState) -> PostCareWorkflowState:
     elif state.get("continuity_action"):
         state["workflow_status"] = "COMPLETED"
         logger.info(f"Workflow completed successfully. Action: {state.get('continuity_action')}")
+    elif state.get("follow_up_output"):
+        # Step 1 non-blocking: workflow completed after follow-up (no patient response yet)
+        state["workflow_status"] = "COMPLETED"
+        logger.info("Workflow completed after follow-up (non-blocking). Awaiting patient response asynchronously.")
     else:
         state["workflow_status"] = "COMPLETED"
         logger.info("Workflow completed")
@@ -240,12 +244,13 @@ def route_after_tool_execution(state: PostCareWorkflowState) -> Literal[
         logger.info(f"Stopping condition met: {stop_reason}")
         return "complete"
     
-    # Check if we need to wait for patient response
-    # This happens after follow_up when we're ready to get patient input
+    # STEP 1: Non-blocking flow — complete after follow-up
+    # The workflow does NOT wait for patient response inline.
+    # Patient responses are handled asynchronously in a separate step.
     if (state.get("follow_up_output") is not None and
         state.get("patient_response") is None):
-        logger.info("Patient response needed - routing to wait_for_response")
-        return "wait_for_response"
+        logger.info("Follow-up complete. Workflow ending (non-blocking). Patient response handled asynchronously.")
+        return "complete"
     
     # Otherwise continue looping - orchestrator will decide next tool
     logger.info("More work to do - routing back to orchestrator_llm")

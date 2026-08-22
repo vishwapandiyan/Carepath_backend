@@ -315,6 +315,35 @@ class PostCareStreamingAdapter:
                             "status": "not_required"
                         }
                     
+                    # STEP 1: Auto-trigger patient notifications after follow-up
+                    if current_state.get("follow_up_output") and db:
+                        try:
+                            from app.services.notification_service import generate_task_reminder
+                            tasks = care_plan.get("tasks", [])
+                            notification_count = 0
+                            for idx, task in enumerate(tasks):
+                                task_status = task.get("status", "PENDING")
+                                if task_status in ("PENDING", "pending"):
+                                    task_text = task.get("description") or task.get("task_type") or task.get("task", f"Task {idx+1}")
+                                    await generate_task_reminder(
+                                        db=db,
+                                        patient_id=self.patient_id,
+                                        task_index=idx,
+                                        task_text=task_text,
+                                        scheduled_for=None
+                                    )
+                                    notification_count += 1
+                            
+                            if notification_count > 0:
+                                logger.info(f"✓ Auto-sent {notification_count} task notifications to patient {self.patient_id}")
+                                yield self._event("notification", {
+                                    "message": f"Sent {notification_count} task notifications to patient",
+                                    "count": notification_count
+                                })
+                                await asyncio.sleep(0.3)
+                        except Exception as notif_err:
+                            logger.warning(f"Failed to auto-send notifications: {notif_err}")
+                    
                     yield self._event("complete", {
                         "message": "Care plan generated successfully!",
                         "care_plan": care_plan,

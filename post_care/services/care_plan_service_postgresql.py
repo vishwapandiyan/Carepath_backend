@@ -236,6 +236,127 @@ def get_plan_tasks(care_plan_id: str) -> List[Dict[str, Any]]:
 
 
 # ============================================================================
+# FUNCTION 7: Revise Care Plan (Step 4 — Care Continuity adjustment)
+# ============================================================================
+
+def revise_care_plan(
+    care_plan_id: str,
+    mrn: str,
+    continuity_action: str,
+    classification: str,
+    symptoms: List[str],
+    concerns: List[str],
+    summary: str,
+    confidence: float,
+) -> Dict[str, Any]:
+    """
+    Revise an existing care plan based on Care Continuity decision.
+    
+    Context-aware revision that:
+    1. Checks existing doctor instructions for matching concerns
+    2. Creates a task specific to THIS patient response
+    3. Uses appropriate task type based on symptom + instruction context
+    4. Preserves care_plan_id, mrn, and existing task history
+    
+    Each patient response that triggers revision creates exactly ONE new task
+    reflecting that specific response. Historical tasks are never deleted.
+    
+    Args:
+        care_plan_id: Existing care plan to revise
+        mrn: Patient MRN
+        continuity_action: The continuity decision
+        classification: Response Analyzer classification
+        symptoms: Extracted symptoms from THIS response
+        concerns: Extracted concerns from THIS response
+        summary: Response summary for THIS response
+        confidence: Analysis confidence
+    
+    Returns:
+        Updated care plan dictionary with tasks
+    """
+    # Get existing plan with full context
+    existing = CarePlanRepository.get_care_plan_by_id(care_plan_id)
+    if not existing:
+        raise ValueError(f"Care plan {care_plan_id} not found")
+    
+    existing_instructions = existing.get("doctor_instructions") or ""
+    
+    # ── Check if symptoms match existing doctor instructions ──────────────
+    symptom_text = ", ".join(symptoms) if symptoms else "none reported"
+    matched_instruction = None
+    
+    # Only check the ORIGINAL instructions (before any [Patient response] revisions)
+    # Split at the first revision marker to get original instructions only
+    original_instructions = existing_instructions.split("[Patient response")[0].strip()
+    
+    for symptom in symptoms:
+        if symptom.lower() in original_instructions.lower():
+            matched_instruction = symptom
+            break
+    
+    # ── Build revision note for THIS response ─────────────────────────────
+    if matched_instruction:
+        revision_note = (
+            f"[Patient response — {classification}] "
+            f"Patient reported: {symptom_text}. "
+            f"Matches existing instruction: '{matched_instruction}'. "
+            f"Escalation protocol applies."
+        )
+    else:
+        revision_note = (
+            f"[Patient response — {classification}] "
+            f"New symptom reported: {symptom_text}. "
+            f"Action: {continuity_action}. Confidence: {confidence:.2f}."
+        )
+    
+    # Append revision note (preserves full history)
+    updated_instructions = f"{existing_instructions}\n\n{revision_note}".strip()
+    
+    # Update the care plan instructions
+    updated_plan = CarePlanRepository.update_care_plan(
+        care_plan_id,
+        {"doctor_instructions": updated_instructions}
+    )
+    
+    # ── Create task for THIS specific response ────────────────────────────
+    # Each response that triggers revision gets its own task.
+    # The task description and context must reflect THIS response only.
+    
+    if matched_instruction:
+        # Symptom matches existing doctor instruction → escalation with protocol link
+        task_type = "CONCERN_ESCALATION"
+        description = f"Patient reported '{matched_instruction}' — existing care instruction applies. Monitor and follow escalation protocol."
+        doctor_instruction_text = f"Patient actively reported: {matched_instruction}. Existing protocol: review original care instructions."
+    elif classification == "URGENT":
+        # Urgent → escalation with current urgent symptoms
+        task_type = "CONCERN_ESCALATION"
+        description = f"URGENT: {summary[:120]}"
+        doctor_instruction_text = f"Urgent symptoms reported: {symptom_text}. Requires immediate clinical review."
+    else:
+        # New concern → monitoring task for this specific symptom
+        task_type = "RESPONSE_MONITORING"
+        description = f"Monitor reported symptom: {symptom_text}. Check patient status at next follow-up."
+        doctor_instruction_text = f"Patient reported: {symptom_text}. Monitor and reassess at next contact."
+    
+    new_task = create_task(
+        care_plan_id=care_plan_id,
+        task_type=task_type,
+        description=description,
+        doctor_instruction=doctor_instruction_text,
+    )
+    logger.info(
+        f"Created {task_type} task {new_task.get('task_id')} for plan {care_plan_id} "
+        f"(symptoms: {symptom_text}, matched_existing: {matched_instruction is not None})"
+    )
+    
+    # Return updated plan with all tasks
+    tasks = CarePlanTaskRepository.get_tasks_by_care_plan(care_plan_id)
+    updated_plan["tasks"] = tasks
+    
+    return updated_plan
+
+
+# ============================================================================
 # UTILITY: Database Health Check
 # ============================================================================
 
