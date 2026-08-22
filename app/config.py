@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     api_key: str = "changeme-api-key"
 
     # Database (PostgreSQL async)
-    database_url: str = "postgresql+asyncpg://postgres:admin123@localhost:5432/ehr_db"
+    database_url: str = "postgresql+asyncpg://vishwa@localhost:5432/carepath_db"
 
     # LLM — Google Gemini
     google_api_key: str = "your-google-api-key-here"
