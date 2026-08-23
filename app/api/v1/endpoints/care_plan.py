@@ -189,37 +189,207 @@ async def get_care_plan_with_tasks(care_plan_id: str, db: AsyncSession) -> Optio
     "/my-care-plan",
     response_model=CarePlan,
     tags=["Care Plans"],
-    summary="Get my active care plan - CARE MANAGERS ONLY"
+    summary="Get my active care plan - PATIENTS ONLY"
 )
 async def get_my_care_plan(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_patient),
     db: AsyncSession = Depends(get_db)
 ) -> CarePlan:
     """
-    Get the active care plan - CARE MANAGERS ONLY.
+    Get the active care plan for the current patient from post_discharge_statuses.
     
-    **Access:** Care managers only - patients should use /patients/{patient_id}/follow-up-tasks instead
+    **Access:** Patients only
     
-    **Returns:** Complete care plan with all tasks
+    **Returns:** Complete care plan with all tasks (transformed from post_discharge_statuses)
     
-    **NOTE:** This endpoint is restricted to care managers. Patients should NOT see full care plans.
-    They should only see follow-up tasks via the /patients/{patient_id}/follow-up-tasks endpoint.
+    **NOTE:** This reads from the care manager's post_discharge_statuses table which is 
+    updated by the care plan revision agent when patients submit concerns.
     """
     
-    # CRITICAL: Block patient access - they should only see follow-up tasks
-    if current_user.role == "PATIENT":
-        raise HTTPException(
-            status_code=403,
-            detail="Patients cannot access care plans directly. Use /patients/{patient_id}/follow-up-tasks instead."
+    patient_id = current_user.patient_id
+    if not patient_id:
+        raise HTTPException(status_code=400, detail="Patient ID not found in user record")
+    
+    logger.info(f"My care plan request for patient: {patient_id}")
+    
+    # Get patient's MRN
+    from app.models.ehr import PatientEHR
+    from app.db.models import PostDischargeStatus
+    from sqlalchemy import text
+    
+    stmt = select(PatientEHR).where(PatientEHR.patient_id == patient_id)
+    result = await db.execute(stmt)
+    patient_ehr = result.scalar_one_or_none()
+    
+    if not patient_ehr:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    
+    mrn = patient_ehr.mrn
+    
+    # Get post_discharge_status which contains the care plan data
+    stmt = select(PostDischargeStatus).where(PostDischargeStatus.patient_id == patient_id)
+    result = await db.execute(stmt)
+    status_row = result.scalar_one_or_none()
+    
+    if not status_row or not status_row.care_plan:
+        # Try to get from PostgreSQL care_plans table as fallback
+        query = text("""
+            SELECT 
+                cp.id,
+                cp.mrn,
+                cp.risk_level,
+                cp.intensity,
+                cp.status,
+                cp.doctor_instructions,
+                cp.created_at,
+                cp.updated_at
+            FROM care_plans cp
+            WHERE cp.mrn = :mrn AND cp.status = 'ACTIVE'
+            ORDER BY cp.created_at DESC
+            LIMIT 1
+        """)
+        
+        pg_result = await db.execute(query, {"mrn": mrn})
+        plan_row = pg_result.first()
+        
+        if not plan_row:
+            raise HTTPException(
+                status_code=404,
+                detail="No active care plan found. Please contact your care manager."
+            )
+        
+        care_plan_id = plan_row[0]
+        
+        # Get tasks from PostgreSQL
+        tasks_query = text("""
+            SELECT 
+                id,
+                task_type,
+                task_description,
+                status,
+                priority,
+                scheduled_date,
+                created_at,
+                updated_at
+            FROM care_plan_tasks
+            WHERE care_plan_id = :care_plan_id
+            ORDER BY created_at ASC
+        """)
+        
+        tasks_result = await db.execute(tasks_query, {"care_plan_id": care_plan_id})
+        tasks = tasks_result.all()
+        
+        return CarePlan(
+            care_plan_id=plan_row[0],
+            mrn=plan_row[1],
+            risk_level=plan_row[2],
+            intensity=plan_row[3],
+            status=plan_row[4],
+            doctor_instructions=plan_row[5],
+            created_at=str(plan_row[6]),
+            updated_at=str(plan_row[7]),
+            tasks=[
+                CareTask(
+                    task_id=t[0],
+                    task_type=t[1],
+                    description=t[2],
+                    status=t[3],
+                    priority=t[4],
+                    scheduled_date=str(t[5]) if t[5] else None,
+                    completed_date=None,
+                    created_at=str(t[6]),
+                    updated_at=str(t[7])
+                )
+                for t in tasks
+            ]
         )
     
-    logger.info(f"Care plan request from care manager: {current_user.username}")
+    # Transform post_discharge_status to CarePlan format
+    care_plan_data = status_row.care_plan
     
-    # This endpoint doesn't make sense for care managers since they don't have a patient_id
-    # Care managers should use /patients/{mrn}/care-plan instead
-    raise HTTPException(
-        status_code=400,
-        detail="Care managers should use /patients/{mrn}/care-plan to access patient care plans"
+    # Get care plan ID from PostgreSQL using MRN
+    query = text("SELECT id, doctor_instructions, risk_level, intensity, status, created_at, updated_at FROM care_plans WHERE mrn = :mrn AND status = 'ACTIVE' LIMIT 1")
+    pg_result = await db.execute(query, {"mrn": mrn})
+    pg_row = pg_result.first()
+    
+    if not pg_row:
+        raise HTTPException(
+            status_code=404,
+            detail="Care plan not found in database. Please contact your care manager."
+        )
+    
+    care_plan_id = pg_row[0]
+    doctor_instructions = pg_row[1]
+    risk_level = pg_row[2]
+    intensity = pg_row[3]
+    status = pg_row[4]
+    created_at = pg_row[5]
+    updated_at = pg_row[6]
+    
+    # Transform tasks from post_discharge_statuses format to CarePlan format
+    tasks = care_plan_data.get("tasks", [])
+    
+    # If post_discharge_statuses has no tasks, get from PostgreSQL
+    if not tasks:
+        tasks_query = text("""
+            SELECT 
+                id,
+                task_type,
+                task_description,
+                status,
+                priority,
+                scheduled_date,
+                created_at,
+                updated_at
+            FROM care_plan_tasks
+            WHERE care_plan_id = :care_plan_id
+            ORDER BY created_at ASC
+        """)
+        
+        tasks_result = await db.execute(tasks_query, {"care_plan_id": care_plan_id})
+        pg_tasks = tasks_result.all()
+        
+        tasks = [
+            CareTask(
+                task_id=str(t[0]),
+                task_type=t[1],
+                description=t[2],
+                status=t[3],
+                priority=t[4],
+                scheduled_date=str(t[5]) if t[5] else None,
+                completed_date=None,
+                created_at=str(t[6]),
+                updated_at=str(t[7])
+            )
+            for t in pg_tasks
+        ]
+    else:
+        # Transform from post_discharge_statuses format
+        tasks = [
+            CareTask(
+                task_id=f"task_{idx}",
+                task_type="MONITORING",
+                description=t.get("task", ""),
+                status=t.get("status", "pending").upper(),
+                priority=None,
+                scheduled_date=None,
+                completed_date=None,
+                created_at=str(created_at),
+                updated_at=str(updated_at)
+            )
+            for idx, t in enumerate(tasks)
+        ]
+    
+    return CarePlan(
+        care_plan_id=care_plan_id,
+        mrn=mrn,
+        risk_level=risk_level,
+        intensity=intensity,
+        status=status,
+        doctor_instructions=doctor_instructions,
+        created_at=str(created_at),
+        updated_at=str(updated_at),
+        tasks=tasks
     )
 
 

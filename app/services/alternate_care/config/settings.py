@@ -5,8 +5,9 @@ from typing import Optional
 class AlternateCareSettings(BaseSettings):
     """Settings for the Alternate Care Agent"""
     
-    # Base URL of the teammate's shared Appointment Agent service.
-    appointment_agent_base_url: str = "http://localhost:8001"
+    # Base URL of the shared Appointment Agent service.
+    # Changed from external :8001 to internal :8000/api/v1/care
+    appointment_agent_base_url: str = "http://localhost:8000/api/v1/care"
     
     # NVIDIA NIM / OpenAI-compatible LLM endpoint
     # NVIDIA_API_KEY has NO default — the client raises at construction time if

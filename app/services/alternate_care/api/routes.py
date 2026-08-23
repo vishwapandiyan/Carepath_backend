@@ -480,12 +480,18 @@ def book(request: BookingRequest) -> AppointmentConfirmation:
     """Validate the provider against the stored recommendation, then book
     the appointment directly in the database.
     """
+    logger.info(
+        "POST /appointments/book RECEIVED: patient_id=%s provider_id=%s slot_id=%s recommendation_id=%s",
+        request.patient_id, request.provider_id, request.slot_id, request.recommendation_id,
+    )
+    
     try:
         provider = recommendation_store.require_provider(
             request.recommendation_id, request.provider_id
         )
         recommendation = recommendation_store.require(request.recommendation_id)
     except KeyError as e:
+        logger.error("POST /appointments/book: recommendation/provider lookup failed: %s", e)
         raise HTTPException(status_code=404, detail=str(e))
 
     care_type = recommendation.decision.destination
@@ -532,6 +538,12 @@ def book(request: BookingRequest) -> AppointmentConfirmation:
             # The patient_id from the request is actually the MRN
             patient_mrn = request.patient_id
             
+            logger.info(
+                "POST /appointments/book: About to INSERT appointment - "
+                "appointment_id=%s mrn=%s provider=%s slot=%s",
+                appointment_id, patient_mrn, request.provider_id, request.slot_id,
+            )
+            
             # Create appointment record
             cursor.execute("""
                 INSERT INTO appointments (
@@ -551,6 +563,11 @@ def book(request: BookingRequest) -> AppointmentConfirmation:
                 'BOOKED',
                 datetime.now()
             ))
+            
+            logger.info(
+                "POST /appointments/book: INSERT successful for appointment_id=%s",
+                appointment_id,
+            )
             
             # Update slot status to BOOKED
             cursor.execute("""

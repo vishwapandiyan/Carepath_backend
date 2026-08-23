@@ -82,7 +82,7 @@ def handoff_to_appointment_agent(
     
     # ── 3. Call the existing Shared Appointment Agent ─────────────────────
     try:
-        from agents.appointment_agent import run_appointment_agent
+        from app.services.alternate_care.agents.appointment_agent import run_appointment_agent
         
         agent_result = run_appointment_agent(
             recommendation_id=session_id,
@@ -95,6 +95,7 @@ def handoff_to_appointment_agent(
             appointment_urgency="IMMEDIATE" if classification == "URGENT" else "THIS_WEEK",
             reason=summary,
             care_plan_id=care_plan_id,
+            mrn=mrn,
         )
     except Exception as e:
         logger.error(f"Appointment Agent call failed: {e}", exc_info=True)

@@ -210,10 +210,28 @@ async def submit_patient_response(
         # Store patient response in the check-in record (if it exists)
         if checkin_id and checkin_id != "DIRECT_RESPONSE":
             cursor.execute(
-                "UPDATE follow_up_checkins SET patient_response = %s, status = 'RESPONDED', response_received_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+                "UPDATE follow_up_checkins SET patient_response = %s, status = 'COMPLETED', response_received_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
                 (request.patient_response, checkin_id)
             )
             conn.commit()
+            logger.info(f"✓ Check-in {checkin_id} marked as COMPLETED")
+        
+        # CRITICAL FIX: Mark ALL other SENT/SCHEDULED check-ins for this care plan as COMPLETED
+        # This prevents duplicate "How are you feeling?" messages from piling up
+        cursor.execute(
+            """
+            UPDATE follow_up_checkins 
+            SET status = 'COMPLETED', updated_at = CURRENT_TIMESTAMP 
+            WHERE care_plan_id = %s 
+              AND status IN ('SENT', 'SCHEDULED') 
+              AND id != %s
+            """,
+            (care_plan_id, checkin_id if checkin_id != "DIRECT_RESPONSE" else "")
+        )
+        completed_count = cursor.rowcount
+        conn.commit()
+        if completed_count > 0:
+            logger.info(f"✓ Marked {completed_count} old check-ins as COMPLETED to prevent duplicates")
 
         close_db_connection(conn)
 
@@ -308,27 +326,8 @@ async def submit_patient_response(
                     )
                     logger.info(f"Care plan {care_plan_id} revised successfully")
 
-                    # Re-run Follow-up Agent with updated tasks
+                    # Get the revised tasks for syncing to post_discharge_statuses
                     revised_tasks = revised_plan.get("tasks", [])
-                    follow_up_input = FollowUpInput(
-                        mrn=mrn,
-                        care_plan_id=care_plan_id,
-                        risk_level=revised_plan.get("risk_level", "HIGH"),
-                        intensity=revised_plan.get("intensity", "INTENSIVE"),
-                        tasks=[
-                            {
-                                "task_id": t.get("task_id"),
-                                "task_type": t.get("task_type"),
-                                "status": t.get("status", "PENDING"),
-                                "description": t.get("description"),
-                                "doctor_instruction": t.get("doctor_instruction"),
-                            }
-                            for t in revised_tasks
-                        ],
-                    )
-
-                    follow_up_output = orchestrate_follow_up(follow_up_input)
-                    logger.info(f"Follow-up re-executed: task={follow_up_output.follow_up.get('task_id') if follow_up_output.follow_up else None}")
 
                     # CRITICAL FIX: Sync revised plan to post_discharge_statuses
                     try:
@@ -341,6 +340,9 @@ async def submit_patient_response(
                         status_row = result.scalar_one_or_none()
                         
                         if status_row:
+                            # Get revised tasks from the revised plan
+                            revised_tasks = revised_plan.get("tasks", [])
+                            
                             # Transform revised plan for post_discharge_statuses format
                             care_plan_data = {
                                 "tasks": [
@@ -386,24 +388,53 @@ async def submit_patient_response(
                         logger.error(f"Failed to sync revised plan to post_discharge_statuses: {sync_err}", exc_info=True)
                         # Non-fatal, continue
 
-                    # Trigger notification for the updated follow-up
+                    # ✓ Care plan revision complete - patients can view updated plan in CarePlans page
+                    # ✓ No notification needed - updates are visible in the website
+                    logger.info(f"✓ Care plan revised and synced - visible in CarePlans page for patient {patient_id}")
+                    
+                    # CRITICAL: Create NEW follow-up check-in for today (for revised plan)
                     try:
-                        from app.services.notification_service import generate_task_reminder
-                        # Notify about the new monitoring task
-                        for idx, t in enumerate(revised_tasks):
-                            if t.get("status") == "PENDING" and t.get("task_type") == "CONCERN_ESCALATION":
-                                task_text = t.get("description") or t.get("task_type")
-                                await generate_task_reminder(
-                                    db=db,
-                                    patient_id=patient_id,
-                                    task_index=idx,
-                                    task_text=task_text,
-                                    scheduled_for=None,
-                                )
-                                logger.info(f"Notification sent for revised task: {t.get('task_id')}")
-                                break
-                    except Exception as notif_err:
-                        logger.warning(f"Notification trigger failed (non-fatal): {notif_err}")
+                        from agents.follow_up.agent import orchestrate_follow_up
+                        from agents.follow_up.schemas import FollowUpInput, FollowUpTask
+                        
+                        # Convert revised tasks to FollowUpTask format
+                        follow_up_tasks = [
+                            FollowUpTask(
+                                task_id=t.get("task_id"),
+                                task_type=t.get("task_type", "MONITORING"),
+                                status=t.get("status", "PENDING"),
+                                description=t.get("description") or t.get("task_type"),
+                                doctor_instruction=doctor_instructions
+                            )
+                            for t in revised_tasks
+                        ]
+                        
+                        follow_up_input = FollowUpInput(
+                            mrn=mrn,
+                            care_plan_id=care_plan_id,
+                            risk_level=revised_plan.get("risk_level", "MODERATE"),
+                            intensity=revised_plan.get("intensity", "REGULAR"),
+                            tasks=follow_up_tasks,
+                            notes=None,
+                            patient_preferences=None
+                        )
+                        
+                        follow_up_output = orchestrate_follow_up(follow_up_input)
+                        logger.info(f"✓ Created new follow-up check-in after care plan revision: {follow_up_output.follow_up.get('checkin_id') if follow_up_output.follow_up else 'N/A'}")
+                        
+                        # Update post_discharge_statuses with new follow-up info
+                        if status_row and follow_up_output.follow_up:
+                            status_row.follow_up = {
+                                "last_checkin": follow_up_output.follow_up.get("created_at", ""),
+                                "next_checkin": follow_up_output.follow_up.get("next_checkin", ""),
+                                "is_scheduled": True,
+                                "checkin_id": follow_up_output.follow_up.get("checkin_id", "")
+                            }
+                            await db.commit()
+                            logger.info(f"✓ Updated follow-up info in post_discharge_statuses")
+                        
+                    except Exception as followup_err:
+                        logger.error(f"Failed to create new follow-up check-in (non-fatal): {followup_err}", exc_info=True)
 
                 except Exception as rev_err:
                     logger.error(f"Care plan revision failed (non-fatal): {rev_err}", exc_info=True)

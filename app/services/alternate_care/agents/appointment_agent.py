@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import requests
 from typing import Any, Dict, List, Optional
 
 from app.services.alternate_care.location.ranking import haversine_km
@@ -721,58 +722,130 @@ def book_appointment(
         "error": "<descriptive message>"
     }
     """
+    logger.info(
+        "book_appointment CALLED: patient_id=%s provider_id=%s slot_id=%s specialty=%s",
+        patient_id, provider_id, slot_id, specialty,
+    )
+    
     try:
-        from models.schemas import BookingRequest
-
-        client = AppointmentAgentClient()
-
-        booking_request = BookingRequest(
-            patient_id=patient_id,
-            recommendation_id="",  # internal field, stripped before the HTTP call
-            provider_id=provider_id,
-            slot_id=slot_id,
-        )
-
-        confirmation = client.book(
-            booking_request,
-            specialty=specialty,
-            patient_context=None,
-        )
-
-        logger.info(
-            "book_appointment: booked appointment_id=%s provider=%s slot=%s",
-            confirmation.appointment_id, provider_id, slot_id,
-        )
-
-        return {
-            "ok": True,
-            "appointment_id": confirmation.appointment_id,
-            "provider_id": confirmation.provider_id,
-            "status": confirmation.status,
-            "slot": confirmation.slot.model_dump(),
-        }
-
-    except requests.exceptions.HTTPError as exc:
-        # Surface the real Appointment Service's error detail (e.g. slot no
-        # longer available, provider mismatch) rather than a generic message.
-        detail = None
+        # DIRECT DATABASE BOOKING (avoid HTTP timeout deadlock)
+        # When the agent calls the booking endpoint on the same server,
+        # it creates a deadlock. Instead, book directly in the database.
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        from datetime import datetime
+        import uuid
+        
+        # Get database URL from config
+        from app.config import settings
+        
+        # Convert async URL to sync format
+        db_url = settings.DATABASE_URL
+        if 'postgresql+asyncpg://' in db_url:
+            db_url = db_url.replace('postgresql+asyncpg://', 'postgresql://')
+        
+        # Connect using psycopg2
+        conn = psycopg2.connect(db_url)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
         try:
-            detail = exc.response.json().get("detail")
-        except Exception:
-            pass
-        logger.warning("book_appointment: booking failed: %s (%s)", exc, detail)
-        return {
-            "ok": False,
-            "error": detail or f"Booking failed: {exc}",
-        }
-    except requests.exceptions.RequestException as exc:
-        logger.warning("book_appointment: HTTP error: %s", exc)
-        return {
-            "ok": False,
-            "error": f"Failed to book appointment: {exc}",
-        }
+            # Verify the slot is still available
+            cursor.execute("""
+                SELECT slot_id, provider_id, start_time, end_time, status
+                FROM provider_slots
+                WHERE slot_id = %s AND provider_id = %s AND status = 'AVAILABLE'
+                FOR UPDATE
+            """, (slot_id, provider_id))
+            
+            slot_row = cursor.fetchone()
+            
+            if not slot_row:
+                conn.rollback()
+                logger.warning(
+                    "book_appointment FAILED: slot %s not available",
+                    slot_id,
+                )
+                return {
+                    "ok": False,
+                    "error": "Slot is no longer available or does not exist",
+                }
+            
+            # Generate appointment ID
+            appointment_id = f"appt_{uuid.uuid4().hex[:12]}"
+            
+            # Get destination for this booking (from provider or default to URGENT_CARE)
+            cursor.execute("""
+                SELECT destination FROM appointment_providers WHERE provider_id = %s
+            """, (provider_id,))
+            provider_row = cursor.fetchone()
+            destination = provider_row['destination'] if provider_row else 'URGENT_CARE'
+            
+            logger.info(
+                "book_appointment: inserting appointment_id=%s mrn=%s provider=%s slot=%s",
+                appointment_id, patient_id, provider_id, slot_id,
+            )
+            
+            # Create appointment record
+            cursor.execute("""
+                INSERT INTO appointments (
+                    appointment_id, mrn, provider_id, slot_id,
+                    start_time, end_time, destination, specialty, status, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                appointment_id,
+                patient_id,  # This is the MRN (overridden by session_mrn)
+                provider_id,
+                slot_id,
+                slot_row['start_time'],
+                slot_row['end_time'],
+                destination,
+                specialty,
+                'BOOKED',
+                datetime.now()
+            ))
+            
+            # Update slot status to BOOKED
+            cursor.execute("""
+                UPDATE provider_slots
+                SET status = 'BOOKED'
+                WHERE slot_id = %s
+            """, (slot_id,))
+            
+            # Commit transaction
+            conn.commit()
+            
+            logger.info(
+                "book_appointment SUCCESS: appointment_id=%s mrn=%s provider=%s slot=%s",
+                appointment_id, patient_id, provider_id, slot_id,
+            )
+            
+            return {
+                "ok": True,
+                "appointment_id": appointment_id,
+                "provider_id": provider_id,
+                "status": "BOOKED",
+                "slot": {
+                    "slot_id": slot_row['slot_id'],
+                    "provider_id": slot_row['provider_id'],
+                    "start_time": slot_row['start_time'].isoformat(),
+                    "end_time": slot_row['end_time'].isoformat(),
+                },
+            }
+            
+        except Exception as db_exc:
+            conn.rollback()
+            logger.error("book_appointment: database error: %s", db_exc, exc_info=True)
+            return {
+                "ok": False,
+                "error": f"Booking failed: {str(db_exc)}",
+            }
+        finally:
+            cursor.close()
+            conn.close()
+
     except Exception as exc:
-        logger.warning("book_appointment: unexpected error: %s", exc)
+        logger.error("book_appointment: unexpected error: %s", exc, exc_info=True)
         return {
             "ok": False,
             "error": f"Unexpected error: {exc}",
@@ -952,34 +1025,38 @@ CRITICAL RULES:
 """
 
 _APPOINTMENT_SYSTEM_PROMPT_POST_CARE = """\
-You are a medical appointment assistant.
+You are a medical appointment assistant handling urgent care management workflows.
 
-This appointment session was initiated by the Post-care care-management
-workflow. The care-management system has already determined the appointment
-intent based on clinical analysis. Use the supplied destination, specialty,
-urgency and reason to fulfill the scheduling request.
+This appointment session was initiated by the Post-care care-management workflow.
+The care-management system has already determined the appointment requirement based
+on clinical analysis. Use the supplied destination, specialty, urgency and reason
+to fulfill the scheduling request IMMEDIATELY.
 
 Do NOT make medical decisions. Do NOT question the clinical determination.
-Do NOT ask what specialty or destination is needed — it has already been
-determined.
+Do NOT ask what specialty or destination is needed — it has already been determined.
 
-Your job is to:
+YOUR WORKFLOW:
 1. Search for nearby providers matching the specified destination and specialty.
-2. Present the providers found.
-3. Help select an appropriate provider (prefer nearest for urgent cases).
-4. Check availability.
-5. Help select a slot.
-6. Book the appointment when confirmed.
+2. FOR IMMEDIATE OR SAME_DAY URGENCY:
+   - AUTO-SELECT the NEAREST provider (first in the list)
+   - Call select_provider with that provider immediately
+   - Then check availability immediately
+   - AUTO-SELECT the EARLIEST available slot
+   - Call select_slot with that slot immediately
+   - Then book the appointment immediately
+   - DO NOT wait for confirmation - proceed directly through all steps
+3. FOR OTHER URGENCY LEVELS:
+   - Present providers and wait for selection
+   - Present slots and wait for selection
 
-For IMMEDIATE urgency: prioritize the nearest available provider and earliest slot.
-For SAME_DAY urgency: prioritize same-day availability.
-For THIS_WEEK urgency: find availability within the next 7 days.
-For ROUTINE urgency: standard scheduling within 30 days.
+IMMEDIATE/SAME_DAY URGENCY EXAMPLES:
+- When you receive IMMEDIATE urgency: search → auto-select nearest provider → check availability → auto-select earliest slot → book
+- Do not ask "Which provider?" or "Which slot?" - choose the first/earliest automatically
 
 CRITICAL RULES:
 - Do NOT invent provider information.
-- Do NOT ask unnecessary questions already answered by the care management system.
-- Be concise and action-oriented.
+- Do NOT ask unnecessary questions for IMMEDIATE/SAME_DAY cases.
+- Be action-oriented: complete the entire booking flow in one conversation turn.
 - Proceed directly to provider search using the supplied parameters.
 """
 
@@ -1013,6 +1090,20 @@ def _build_appointment_messages(
         reason_text = f"Reason: {reason}\n" if reason else ""
         care_plan_text = f"Care plan: {care_plan_id}\n" if care_plan_id else ""
         
+        # Craft action directive based on urgency
+        if appointment_urgency in ("IMMEDIATE", "SAME_DAY"):
+            action_directive = (
+                f"EXECUTE BOOKING NOW:\n"
+                f"1. Search for nearby {specialty or destination} providers\n"
+                f"2. Auto-select the NEAREST provider (first in list)\n"
+                f"3. Check availability for that provider\n"
+                f"4. Auto-select the EARLIEST available slot\n"
+                f"5. Book the appointment immediately\n"
+                f"Do NOT wait for confirmation - complete all steps now."
+            )
+        else:
+            action_directive = f"Find nearby {specialty or destination} providers and present options."
+        
         user_content = (
             f"[POST-CARE APPOINTMENT REQUEST]\n"
             f"Source: POST_CARE (care-management workflow)\n"
@@ -1023,7 +1114,7 @@ def _build_appointment_messages(
             f"{care_plan_text}"
             f"Patient location: latitude={latitude}, longitude={longitude}\n"
             f"Search radius: {radius_km} km\n\n"
-            f"Find nearby {specialty or destination} providers and present options."
+            f"{action_directive}"
         )
     else:
         system_prompt = _APPOINTMENT_SYSTEM_PROMPT_PATIENT
@@ -1433,6 +1524,7 @@ def run_appointment_agent(
     appointment_urgency: Optional[str] = None,
     reason: Optional[str] = None,
     care_plan_id: Optional[str] = None,
+    mrn: Optional[str] = None,
     client: Optional[NvidiaClient] = None,
     max_iterations: int = MAX_APPOINTMENT_ITERATIONS,
 ) -> Dict[str, Any]:
@@ -1507,6 +1599,7 @@ def run_appointment_agent(
         messages,
         client=client,
         max_iterations=max_iterations,
+        session_mrn=mrn,
     )
     result["source"] = source
     return result

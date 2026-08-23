@@ -253,11 +253,20 @@ class PostCareStreamingAdapter:
                         
                         # Trigger appointment bridge
                         try:
+                            # Add care_plan_id to continuity output for handoff
+                            care_continuity_with_plan_id = {
+                                **current_state.get("care_continuity_output", {}),
+                                "care_plan_id": current_state.get("care_plan_id")
+                            }
+                            
                             appointment_result = await appointment_bridge.trigger_appointment_workflow(
                                 patient_id=self.patient_id,
-                                care_continuity_output=current_state.get("care_continuity_output", {}),
+                                care_continuity_output=care_continuity_with_plan_id,
                                 db=db
                             )
+                            
+                            # Store the result for later use in the complete phase
+                            self._appointment_bridge_result = appointment_result
                             
                             if appointment_result and appointment_result.get("success"):
                                 yield self._event("tool_call", {
@@ -304,53 +313,38 @@ class PostCareStreamingAdapter:
                     
                     # Check for appointment context from bridge
                     appointment_data = None
+                    appointment_bridge_result = None
                     if current_state.get("requires_appointment"):
-                        # Try to get appointment context if bridge was called
-                        appointment_data = {
-                            "appointment_required": True,
-                            "status": "requires_review"
-                        }
+                        # Check if we have a stored appointment result from the bridge call above
+                        care_continuity_output = current_state.get("care_continuity_output", {})
+                        if hasattr(self, '_appointment_bridge_result'):
+                            appointment_bridge_result = self._appointment_bridge_result
+                            logger.info(f"Using stored appointment bridge result: {appointment_bridge_result.get('success')}")
+                        
+                        if appointment_bridge_result and appointment_bridge_result.get("success"):
+                            # Use the actual bridge result
+                            handoff = appointment_bridge_result.get("handoff_result", {})
+                            appointment_data = {
+                                "appointment_required": True,
+                                "status": "booked" if handoff.get("appointment_id") else "providers_searched",
+                                "session_id": handoff.get("session_id"),
+                                "provider_count": handoff.get("provider_count", 0),
+                                "appointment_id": handoff.get("appointment_id"),
+                                "destination": handoff.get("destination"),
+                                "specialty": handoff.get("specialty"),
+                            }
+                        else:
+                            # Fallback - bridge not called or failed
+                            appointment_data = {
+                                "appointment_required": True,
+                                "status": "requires_review"
+                            }
                     else:
                         appointment_data = {
                             "status": "not_required"
                         }
                     
-                    # STEP 1: Auto-trigger patient notifications after follow-up
-                    if current_state.get("follow_up_output") and db:
-                        try:
-                            from app.services.notification_service import generate_task_reminder
-                            tasks = care_plan.get("tasks", [])
-                            notification_count = 0
-                            for idx, task in enumerate(tasks):
-                                task_status = task.get("status", "PENDING")
-                                if task_status in ("PENDING", "pending", "IN_PROGRESS", "in_progress"):
-                                    # Note: tasks in state use "description" field (from orchestrator tool conversion)
-                                    task_text = task.get("description", f"Task {idx+1}")
-                                    await generate_task_reminder(
-                                        db=db,
-                                        patient_id=self.patient_id,
-                                        task_index=idx,
-                                        task_text=task_text,
-                                        scheduled_for=None
-                                    )
-                                    notification_count += 1
-                            
-                            if notification_count > 0:
-                                logger.info(f"✓ Auto-sent {notification_count} task notifications to patient {self.patient_id}")
-                                yield self._event("notification", {
-                                    "message": f"Sent {notification_count} task notifications to patient",
-                                    "count": notification_count
-                                })
-                                await asyncio.sleep(0.3)
-                        except Exception as notif_err:
-                            logger.warning(f"Failed to auto-send notifications: {notif_err}")
-                            # Rollback the failed transaction so we can continue
-                            try:
-                                await db.rollback()
-                            except:
-                                pass
-                    
-                    # STEP 2: CRITICAL - Sync to post_discharge_statuses for Care Manager visibility
+                    # STEP 1: CRITICAL - Sync to post_discharge_statuses for Care Manager visibility
                     if db:
                         try:
                             from app.db.models import PostDischargeStatus

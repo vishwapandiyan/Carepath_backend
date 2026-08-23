@@ -107,15 +107,85 @@ class AppointmentBridgeService:
                 f"Urgency: {urgency}, Manual review: {appointment_context['requires_manual_review']}"
             )
             
-            # For now, return the context for care manager to review
-            # In production, this would trigger the alternate care navigation agent
-            return {
-                "success": True,
-                "appointment_required": True,
-                "appointment_context": appointment_context,
-                "next_steps": self._get_next_steps(urgency, care_continuity_output),
-                "message": f"Appointment recommended: {care_continuity_output.get('reason')}"
-            }
+            # ACTUALLY TRIGGER THE SHARED APPOINTMENT AGENT via post_care handoff
+            try:
+                logger.info(f"Attempting to import appointment handoff for patient {patient_id}...")
+                
+                # Ensure post_care is in sys.path
+                import sys
+                from pathlib import Path
+                POST_CARE_PATH = Path(__file__).parent.parent.parent / "post_care"
+                if str(POST_CARE_PATH) not in sys.path:
+                    sys.path.insert(0, str(POST_CARE_PATH))
+                    logger.info(f"Added {POST_CARE_PATH} to sys.path")
+                
+                from services.appointment_handoff import handoff_to_appointment_agent
+                logger.info("✓ Successfully imported handoff_to_appointment_agent")
+                
+                # Map urgency to appointment_urgency
+                urgency_map = {
+                    "urgent": "IMMEDIATE",
+                    "high_priority": "THIS_WEEK",
+                    "routine": "ROUTINE"
+                }
+                appointment_urgency = urgency_map.get(urgency, "ROUTINE")
+                
+                # Get care plan ID from patient context
+                care_plan_id = care_continuity_output.get("care_plan_id", "")
+                
+                logger.info(
+                    f"Calling handoff service: mrn={patient_ehr.mrn}, "
+                    f"care_plan_id={care_plan_id}, urgency={appointment_urgency}"
+                )
+                
+                # Call the handoff service
+                handoff_result = handoff_to_appointment_agent(
+                    mrn=patient_ehr.mrn,
+                    care_plan_id=care_plan_id,
+                    classification=care_continuity_output.get("classification", "CONCERN"),
+                    symptoms=care_continuity_output.get("symptoms", []),
+                    concerns=care_continuity_output.get("concerns", []),
+                    summary=care_continuity_output.get("reason", "Post-discharge follow-up required"),
+                    confidence=care_continuity_output.get("confidence", 0.8),
+                    latitude=13.0827,  # Default Chennai - get from patient location in future
+                    longitude=80.2707,
+                    radius_km=15.0,
+                )
+                
+                if handoff_result.get("success"):
+                    logger.info(
+                        f"Patient {patient_id}: Appointment handoff successful. "
+                        f"Session: {handoff_result.get('session_id')}, "
+                        f"Providers found: {handoff_result.get('provider_count', 0)}"
+                    )
+                    return {
+                        "success": True,
+                        "appointment_required": True,
+                        "appointment_context": appointment_context,
+                        "handoff_result": handoff_result,
+                        "next_steps": self._get_next_steps(urgency, care_continuity_output),
+                        "message": f"Appointment search initiated: {care_continuity_output.get('reason')}"
+                    }
+                else:
+                    logger.error(f"Appointment handoff failed: {handoff_result.get('error')}")
+                    return {
+                        "success": False,
+                        "error": handoff_result.get("error"),
+                        "appointment_context": appointment_context,
+                        "next_steps": self._get_next_steps(urgency, care_continuity_output),
+                        "requires_manual_booking": True
+                    }
+            except Exception as handoff_exc:
+                logger.error(f"Failed to call appointment handoff: {handoff_exc}", exc_info=True)
+                # Fallback to manual booking
+                return {
+                    "success": True,
+                    "appointment_required": True,
+                    "appointment_context": appointment_context,
+                    "next_steps": self._get_next_steps(urgency, care_continuity_output),
+                    "message": f"Appointment recommended (manual booking): {care_continuity_output.get('reason')}",
+                    "requires_manual_booking": True
+                }
             
         except Exception as e:
             logger.error(f"Failed to trigger appointment workflow for patient {patient_id}: {e}", exc_info=True)
