@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import os
 
 
 class Settings(BaseSettings):
@@ -10,8 +11,8 @@ class Settings(BaseSettings):
     # Authentication — all segment routers use X-API-Key header
     api_key: str = "changeme-api-key"
 
-    # Database (PostgreSQL async)
-    database_url: str = "postgresql+asyncpg://vishwa@localhost:5432/carepath_db"
+    # Database components (can be set individually or as DATABASE_URL)
+    database_url: str = ""  # Use this directly if provided
 
     # LLM — Google Gemini
     google_api_key: str = "your-google-api-key-here"
@@ -45,7 +46,14 @@ class Settings(BaseSettings):
 
     @property
     def DATABASE_URL(self) -> str:
-        return self.database_url
+        """Return DATABASE_URL, ensuring it has the async driver"""
+        if self.database_url:
+            # If it's postgresql:// (sync), convert to postgresql+asyncpg://
+            if self.database_url.startswith("postgresql://"):
+                return self.database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            return self.database_url
+        # Default for local development
+        return "postgresql+asyncpg://vishwa@localhost:5432/carepath_db"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

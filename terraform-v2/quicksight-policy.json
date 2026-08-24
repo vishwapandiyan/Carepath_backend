@@ -1,0 +1,16 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "quicksight:GenerateEmbedUrlForAnonymousUser",
+        "quicksight:GenerateEmbedUrlForRegisteredUser"
+      ],
+      "Resource": [
+        "arn:aws:quicksight:us-east-1:363401891883:namespace/default",
+        "arn:aws:quicksight:us-east-1:363401891883:dashboard/*"
+      ]
+    }
+  ]
+}

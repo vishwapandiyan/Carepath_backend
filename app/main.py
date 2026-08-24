@@ -36,73 +36,13 @@ async def lifespan(app: FastAPI):
     # ── Startup ───────────────────────────────────────────────────────────────
     logger.info("Starting AI Medical System API  env=%s", settings.app_env)
     
-    # Temporarily disable SQLAlchemy logging during migrations
-    sqlalchemy_logger = logging.getLogger("sqlalchemy.engine")
-    original_level = sqlalchemy_logger.level
-    sqlalchemy_logger.setLevel(logging.CRITICAL)
-    
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
             
-        # Safe column additions and sequence setup for pre-existing PostgreSQL tables
-        col_statements = [
-            "CREATE SEQUENCE IF NOT EXISTS users_id_seq;",
-            "ALTER TABLE users ALTER COLUMN id TYPE INTEGER USING id::integer;",
-            "ALTER TABLE users ALTER COLUMN id SET DEFAULT nextval('users_id_seq');",
-            "ALTER TABLE users ALTER COLUMN email DROP NOT NULL;",
-            "ALTER TABLE users ALTER COLUMN first_name DROP NOT NULL;",
-            "ALTER TABLE users ALTER COLUMN last_name DROP NOT NULL;",
-            "ALTER TABLE users ALTER COLUMN hashed_password DROP NOT NULL;",
-            "ALTER TABLE users ALTER COLUMN is_active DROP NOT NULL;",
-            "ALTER TABLE users ALTER COLUMN is_active SET DEFAULT TRUE;",
-            "ALTER TABLE users ALTER COLUMN is_superuser DROP NOT NULL;",
-            "ALTER TABLE users ALTER COLUMN full_name DROP NOT NULL;",
-            "ALTER TABLE users ALTER COLUMN created_at DROP NOT NULL;",
-            "ALTER TABLE users ALTER COLUMN created_at SET DEFAULT NOW();",
-            "ALTER TABLE users ALTER COLUMN updated_at DROP NOT NULL;",
-            "ALTER TABLE users ALTER COLUMN updated_at SET DEFAULT NOW();",
-            "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);",
-            "ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(50);",
-            "ALTER TABLE users ADD COLUMN IF NOT EXISTS patient_id VARCHAR(50);",
-            "ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();",
-            "ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();",
-            "ALTER TABLE patients ADD COLUMN IF NOT EXISTS mrn VARCHAR(50);",
-            "ALTER TABLE patients ADD COLUMN IF NOT EXISTS gender VARCHAR(20);",
-            "ALTER TABLE patients ADD COLUMN IF NOT EXISTS contact_number VARCHAR(50);",
-            "ALTER TABLE patients ADD COLUMN IF NOT EXISTS email VARCHAR(255);",
-            "ALTER TABLE patients ADD COLUMN IF NOT EXISTS address VARCHAR(500);",
-            "ALTER TABLE patients ADD COLUMN IF NOT EXISTS admission_date VARCHAR(25);",
-            "ALTER TABLE patients ADD COLUMN IF NOT EXISTS discharge_date VARCHAR(25);",
-            "ALTER TABLE patients ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;",
-            "ALTER TABLE patients ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;",
-            "ALTER TABLE patients ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE;",
-            "ALTER TABLE patients ALTER COLUMN created_at DROP NOT NULL;",
-            "ALTER TABLE patients ALTER COLUMN created_at SET DEFAULT NOW();",
-            "ALTER TABLE patients ALTER COLUMN updated_at DROP NOT NULL;",
-            "ALTER TABLE patients ALTER COLUMN updated_at SET DEFAULT NOW();",
-            "CREATE UNIQUE INDEX IF NOT EXISTS ix_patients_mrn ON patients (mrn) WHERE mrn IS NOT NULL;",
-        ]
-
-        # Run migrations silently
-        migration_count = 0
-        for stmt in col_statements:
-            try:
-                async with engine.begin() as conn:
-                    await conn.execute(text(stmt))
-                    migration_count += 1
-            except Exception as col_exc:
-                logger.debug("Column migration skipped (%s)", col_exc)
-
-        # Restore SQLAlchemy logging level
-        sqlalchemy_logger.setLevel(original_level)
-        
-        logger.info("Database tables and columns verified / created (%d migrations applied).", migration_count)
+        logger.info("Database tables verified / created.")
 
     except Exception as exc:
-        # Restore SQLAlchemy logging level even on error
-        sqlalchemy_logger.setLevel(original_level)
-        
         logger.warning(
             "Database unavailable at startup (%s). "
             "Safety /evaluate and /assessment endpoints require PostgreSQL. "
@@ -128,10 +68,16 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://d2wdvr99379bz0.cloudfront.net",  # Frontend CloudFront
+        "http://localhost:5173",  # Local development
+        "http://localhost:3000",
+        "*"  # Allow all origins as fallback
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Auth and EHR endpoints mounted under /api/v1

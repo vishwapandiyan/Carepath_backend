@@ -1,0 +1,44 @@
+╔══════════════════════════════════════════════════════════════════╗
+║              COST COMPARISON: v1 vs v2 vs v2-Free               ║
+╠══════════════════════════════════════════════════════════════════╣
+║                                                                  ║
+║  📊 Original v1 (Single Container)                               ║
+║  ┌────────────────────────────────────────────────────────────┐ ║
+║  │  • 1 Docker container (Backend + ML combined)              │ ║
+║  │  • 1 × t2.micro EC2                                        │ ║
+║  │  • 1 × ALB                                                 │ ║
+║  │  • db.t3.micro RDS                                         │ ║
+║  │                                                            │ ║
+║  │  💰 Cost: ~$52/month                                       │ ║
+║  └────────────────────────────────────────────────────────────┘ ║
+║                                                                  ║
+║  📊 v2 Production (Separate Containers)                          ║
+║  ┌────────────────────────────────────────────────────────────┐ ║
+║  │  • 2 Docker containers (Backend + ML separate)            │ ║
+║  │  • 2 × t3.medium EC2                                       │ ║
+║  │  • 2 × ALB (Public + Internal)                            │ ║
+║  │  • db.t3.micro RDS                                         │ ║
+║  │                                                            │ ║
+║  │  💰 Cost: ~$120-135/month                                  │ ║
+║  └────────────────────────────────────────────────────────────┘ ║
+║                                                                  ║
+║  📊 v2 Free Tier (Separate Containers - Optimized) ⭐           ║
+║  ┌────────────────────────────────────────────────────────────┐ ║
+║  │  • 2 Docker containers (Backend + ML separate)            │ ║
+║  │  • 1 × t2.micro EC2 (FREE - 750 hrs/month)                │ ║
+║  │  • 1 × ALB with path routing                              │ ║
+║  │  • db.t3.micro RDS (FREE - 750 hrs/month)                 │ ║
+║  │                                                            │ ║
+║  │  �� Cost: ~$18-22/month (BEST VALUE!) ✨                   │ ║
+║  └────────────────────────────────────────────────────────────┘ ║
+║                                                                  ║
+╠══════════════════════════════════════════════════════════════════╣
+║                    SAVINGS CALCULATION                           ║
+╠══════════════════════════════════════════════════════════════════╣
+║                                                                  ║
+║  v2 Free Tier vs v1:         Saves ~$30-34/month (58% cheaper)  ║
+║  v2 Free Tier vs v2 Prod:    Saves ~$98-117/month (83% cheaper) ║
+║                                                                  ║
+║  🎯 Annual Savings:          ~$1,176-1,404/year!                ║
+║                                                                  ║
+╚══════════════════════════════════════════════════════════════════╝

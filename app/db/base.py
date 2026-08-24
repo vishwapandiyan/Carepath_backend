@@ -3,8 +3,11 @@ from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
 
+# Ensure DATABASE_URL has the async driver for AWS RDS connection
+database_url = settings.DATABASE_URL  # This uses the property which converts postgresql:// to postgresql+asyncpg://
+
 engine = create_async_engine(
-    settings.database_url,
+    database_url,
     echo=settings.app_env == "development",
     pool_pre_ping=True,
     pool_size=10,

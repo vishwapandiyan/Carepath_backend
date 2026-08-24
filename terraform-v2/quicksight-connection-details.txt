@@ -1,0 +1,45 @@
+╔═══════════════════════════════════════════════════════════════════════╗
+║           AMAZON QUICKSIGHT - RDS CONNECTION DETAILS                  ║
+║                        CarePath AI System                             ║
+╚═══════════════════════════════════════════════════════════════════════╝
+
+📊 QUICKSIGHT CONSOLE
+└─ URL: https://quicksight.aws.amazon.com/
+
+🗄️ DATABASE CONNECTION
+├─ Host: carepath-ai-db-prod.cu5o4e24iwmf.us-east-1.rds.amazonaws.com
+├─ Port: 5432
+├─ Database: carepath_db
+├─ Username: dbadmin
+└─ Password: E2}=9]P662Qzxx{K)HWv[[K$#hay5$58
+
+🔐 VPC CONNECTION (Required)
+├─ VPC ID: vpc-0d2e61a92b4ca0ba3
+├─ Security Group: sg-0c16ac81229df3c14
+└─ Subnets:
+    ├─ subnet-0a02860b167c1d5d3
+    └─ subnet-05eb90e0b2e352432
+
+📍 REGION
+└─ us-east-1
+
+🎯 QUICK START (3 Steps)
+1. Go to: https://quicksight.aws.amazon.com/
+2. Create VPC Connection (Manage QuickSight → VPC connections)
+3. Create Dataset (Datasets → New → PostgreSQL)
+
+📖 FULL GUIDE
+└─ See: QUICKSIGHT_SETUP.md
+
+⚠️  SECURITY NOTES
+├─ Always use VPC connection (not direct/public)
+├─ Password stored in AWS Secrets Manager
+└─ Never commit passwords to git
+
+💰 COST ESTIMATE
+├─ Standard: $24/month per author
+├─ Readers: $0.30/session (max $5/month)
+└─ 30-day free trial available
+
+═══════════════════════════════════════════════════════════════════════
+Generated: 2026-08-24

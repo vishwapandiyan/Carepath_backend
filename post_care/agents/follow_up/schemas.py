@@ -137,8 +137,8 @@ class FollowUpInput(BaseModel):
         description="Post-care intensity level (informational only, do NOT recalculate)"
     )
     tasks: list[FollowUpTask] = Field(
-        ...,
-        description="List of tasks in the care plan that need follow-up"
+        default_factory=list,
+        description="List of tasks in the care plan that need follow-up (may be empty if no tasks yet)"
     )
     notes: Optional[str] = Field(
         default=None,
@@ -175,13 +175,6 @@ class FollowUpInput(BaseModel):
         """Validate intensity is one of allowed values."""
         if v not in ["INTENSIVE", "REGULAR", "BASIC"]:
             raise ValueError(f"Invalid intensity: {v}. Must be INTENSIVE, REGULAR, or BASIC")
-        return v
-
-    @field_validator("tasks")
-    def tasks_not_empty(cls, v):
-        """Validate that tasks list is not empty."""
-        if not v:
-            raise ValueError("tasks list cannot be empty")
         return v
 
 
