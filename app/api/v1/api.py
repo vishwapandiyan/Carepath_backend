@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import auth, patient, care_manager, ehr, chat, notifications, patient_response, care_plan, appointments
+from app.api.v1.endpoints import auth, patient, care_manager, ehr, chat, notifications, patient_response, care_plan, appointments, admin, quicksight, alternate_care
 
 api_router = APIRouter()
 
@@ -12,3 +12,6 @@ api_router.include_router(notifications.router, tags=["Patient Notifications"])
 api_router.include_router(patient_response.router, tags=["Patient - Care Plan Response"])
 api_router.include_router(care_plan.router, tags=["Care Plans"])
 api_router.include_router(appointments.router, tags=["Appointments"])
+api_router.include_router(admin.router, prefix="/admin", tags=["Admin"])
+api_router.include_router(quicksight.router, prefix="/quicksight", tags=["QuickSight Analytics"])
+api_router.include_router(alternate_care.router, prefix="/alternate-care", tags=["Alternate Care Navigation"])
