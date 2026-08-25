@@ -162,17 +162,17 @@ async def submit_patient_response(
         care_plan_id = plan_row[0]
         doctor_instructions = plan_row[3]
 
-        # Find the relevant check-in
+        # Find the relevant check-in (using VERIFIED schema: message NOT checkin_message)
         if request.checkin_id:
             cursor.execute(
-                "SELECT id, task_id, checkin_type, checkin_message FROM follow_up_checkins WHERE id = %s",
+                "SELECT id, task_id, checkin_type, message FROM follow_up_checkins WHERE id = %s",
                 (request.checkin_id,)
             )
         else:
             # Use the most recent scheduled check-in for this care plan's tasks
             cursor.execute(
                 """
-                SELECT fc.id, fc.task_id, fc.checkin_type, fc.checkin_message
+                SELECT fc.id, fc.task_id, fc.checkin_type, fc.message
                 FROM follow_up_checkins fc
                 JOIN care_plan_tasks cpt ON fc.task_id = cpt.id
                 WHERE cpt.care_plan_id = %s AND fc.status IN ('SCHEDULED', 'SENT')
@@ -207,10 +207,10 @@ async def submit_patient_response(
                 checkin_id = "DIRECT_RESPONSE"
                 checkin_message = None
 
-        # Store patient response in the check-in record (if it exists)
+        # Store patient response in the check-in record (if it exists) (using VERIFIED schema: response NOT patient_response)
         if checkin_id and checkin_id != "DIRECT_RESPONSE":
             cursor.execute(
-                "UPDATE follow_up_checkins SET patient_response = %s, status = 'RESPONDED', response_received_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+                "UPDATE follow_up_checkins SET response = %s, status = 'RESPONSE_RECEIVED', response_received_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
                 (request.patient_response, checkin_id)
             )
             conn.commit()

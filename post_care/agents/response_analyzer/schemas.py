@@ -104,6 +104,35 @@ class ResponseAnalyzerInput(BaseModel):
         description="Task description from care plan (contextual)"
     )
     
+    # ═══════════════════════════════════════════════════════════════════════════
+    # MULTI-TURN CONVERSATION CONTEXT (for voice conversations)
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    turn_number: Optional[int] = Field(
+        default=None,
+        description="Turn number in a multi-turn conversation (1=first, 2=follow-up, etc.)"
+    )
+    
+    prior_patient_response: Optional[str] = Field(
+        default=None,
+        description="Previous turn's patient response (for context in multi-turn)"
+    )
+    
+    prior_classification: Optional[str] = Field(
+        default=None,
+        description="Previous turn's classification (e.g., CONCERN, NORMAL)"
+    )
+    
+    prior_symptoms: Optional[list] = Field(
+        default=None,
+        description="Previous turn's identified symptoms (list of strings)"
+    )
+    
+    prior_concerns: Optional[list] = Field(
+        default=None,
+        description="Previous turn's identified concerns (list of strings)"
+    )
+    
     @field_validator("mrn")
     def mrn_not_empty(cls, v):
         """Validate MRN is not empty."""

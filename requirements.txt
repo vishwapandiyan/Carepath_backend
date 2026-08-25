@@ -27,3 +27,11 @@ lightgbm>=3.3.0
 catboost>=1.2.0
 streamlit>=1.28.0
 
+# LangChain and Graph-based AI (Post-Care Agent)
+langchain>=0.1.0
+langchain-openai>=0.0.1
+langgraph>=0.0.1
+
+# Twilio Voice Integration
+twilio>=9.0.0
+

@@ -200,6 +200,10 @@ def _build_user_prompt(input_data: ResponseAnalyzerInput) -> str:
     Includes only the information needed for the LLM to understand the
     patient's response. Excludes unnecessary database information.
     
+    For multi-turn conversations, includes prior turn context so that
+    the LLM can understand the current response as a continuation of
+    the same conversation.
+    
     Args:
         input_data: ResponseAnalyzerInput with patient response and context
         
@@ -220,6 +224,39 @@ def _build_user_prompt(input_data: ResponseAnalyzerInput) -> str:
     
     if input_data.doctor_instruction:
         lines.append(f"Doctor instruction: {input_data.doctor_instruction}")
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # MULTI-TURN CONTEXT: Include prior turn for contextual analysis
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    if (input_data.turn_number and input_data.turn_number > 1 and 
+        input_data.prior_patient_response and input_data.prior_classification):
+        
+        lines.extend([
+            "",
+            "IMPORTANT: This is part of a multi-turn conversation.",
+            f"Turn 1 (prior) patient response: \"{input_data.prior_patient_response}\"",
+            f"Turn 1 classification: {input_data.prior_classification}",
+        ])
+        
+        if input_data.prior_symptoms:
+            lines.append(f"Turn 1 identified symptoms: {input_data.prior_symptoms}")
+        
+        if input_data.prior_concerns:
+            lines.append(f"Turn 1 identified concerns: {input_data.prior_concerns}")
+        
+        lines.extend([
+            "",
+            f"Turn {input_data.turn_number} (current) patient response:",
+            f'"{input_data.patient_response}"',
+            "",
+            "Analyze this CURRENT response considering the PRIOR context.",
+            "If the current response refers to the same symptoms/concerns from Turn 1,",
+            "maintain the same symptom classification and consider the progression.",
+            "Example: If Turn 1 was 'I have a headache' (CONCERN, symptom=headache)",
+            "and Turn 2 is 'It's staying the same', this indicates the headache",
+            "persists, NOT that the patient is now in a stable/normal state.",
+        ])
     
     lines.extend([
         "",
@@ -347,8 +384,10 @@ def _fix_llm_json_issues(text: str) -> str:
     Fix common LLM JSON formatting issues.
     
     Known issues:
-    - LLM sometimes writes numbers as words (e.g., "0. nine" instead of "0.9")
+    - LLM sometimes writes numbers as words (e.g., "0. nine" instead of "0.9" or 0. nine" instead of 0.9")
     - These appear as confidence values
+    - The pattern can be: 0. nine" or "0. nine" or 0. nine
+    - After fixing word to digit, may have extra quote: 0.9" should be 0.9
     
     Args:
         text: Potentially malformed JSON text
@@ -372,11 +411,25 @@ def _fix_llm_json_issues(text: str) -> str:
     }
     
     # Match patterns like "0. eight" and convert to "0.8"
+    # Handle both with and without quotes in various positions
     for word, digit in number_words.items():
-        # Pattern: decimal point followed by space and word
-        pattern = rf'0\.\s+{word}(?=[,\n}}])'
-        replacement = f'0.{digit}'
-        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+        # Pattern 1: 0. word" (quote after word) -> 0.digit (remove trailing quote)
+        # Matches: 0. nine" -> 0.9
+        pattern1 = rf'0\.\s+{word}"'
+        replacement1 = f'0.{digit}'
+        text = re.sub(pattern1, replacement1, text, flags=re.IGNORECASE)
+        
+        # Pattern 2: "0. word" (quotes around both) -> "0.digit"
+        # Matches: "0. nine" -> "0.9"
+        pattern2 = rf'"0\.\s+{word}"'
+        replacement2 = f'"0.{digit}"'
+        text = re.sub(pattern2, replacement2, text, flags=re.IGNORECASE)
+        
+        # Pattern 3: 0. word (no quotes) -> 0.digit
+        # Matches: 0. eight (at end of line or before comma/brace)
+        pattern3 = rf'0\.\s+{word}(?=[,\n\s}}])'
+        replacement3 = f'0.{digit}'
+        text = re.sub(pattern3, replacement3, text, flags=re.IGNORECASE)
     
     return text
 

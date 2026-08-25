@@ -86,11 +86,11 @@ class FollowUpCheckInRepository:
             cursor.execute(
                 """
                 INSERT INTO follow_up_checkins 
-                (id, care_plan_id, task_id, checkin_type, scheduled_at, status, checkin_message, created_at, updated_at)
+                (checkin_id, task_id, checkin_type, scheduled_at, status, channel, message, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                RETURNING id, task_id, checkin_type, scheduled_at, status, checkin_message, created_at
+                RETURNING checkin_id, task_id, checkin_type, scheduled_at, status, message, created_at
                 """,
-                (checkin_id, care_plan_id, task_id, checkin_type, scheduled_at, "SCHEDULED", message)
+                (checkin_id, task_id, checkin_type, scheduled_at, "SCHEDULED", channel, message)
             )
             
             result = cursor.fetchone()
@@ -133,9 +133,9 @@ class FollowUpCheckInRepository:
             
             cursor.execute(
                 """
-                SELECT id, task_id, checkin_type, scheduled_at, status, checkin_message, patient_response, response_received_at, created_at, updated_at
+                SELECT id, task_id, checkin_type, scheduled_at, status, message, response, response_received_at, created_at, updated_at
                 FROM follow_up_checkins
-                WHERE id = %s
+                WHERE checkin_id = %s
                 """,
                 (checkin_id,)
             )
@@ -179,7 +179,7 @@ class FollowUpCheckInRepository:
             
             cursor.execute(
                 """
-                SELECT id, task_id, checkin_type, scheduled_at, status, checkin_message, patient_response, response_received_at, created_at, updated_at
+                SELECT id, task_id, checkin_type, scheduled_at, status, message, response, response_received_at, created_at, updated_at
                 FROM follow_up_checkins
                 WHERE task_id = %s
                 ORDER BY created_at ASC

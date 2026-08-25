@@ -19,7 +19,7 @@ DB_CONFIG = {
     "host": "localhost",
     "port": 5432,
     "dbname": "carepath_db",
-    "user": "vishwa"
+    "user": "subitsha"
 }
 
 

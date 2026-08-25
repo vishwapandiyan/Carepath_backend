@@ -259,14 +259,14 @@ async def get_patient_follow_up_tasks(
     if not patient_ehr:
         raise HTTPException(status_code=404, detail="Patient not found")
     
-    # Get all follow-up check-ins for this patient's active care plans
+    # Get all follow-up check-ins for this patient's active care plans (using VERIFIED schema: message NOT checkin_message, response NOT patient_response)
     query = text("""
         SELECT 
             fc.id,
             fc.task_id,
             fc.checkin_type,
-            fc.checkin_message,
-            fc.patient_response,
+            fc.message,
+            fc.response AS patient_response,
             fc.response_received_at,
             fc.classification,
             fc.status,
@@ -565,14 +565,14 @@ async def get_care_plan_checkins(
             detail=f"Care plan {care_plan_id} not found"
         )
     
-    # Get check-ins
+    # Get check-ins (using VERIFIED schema: message NOT checkin_message, response NOT patient_response)
     checkins_query = text("""
         SELECT 
             fc.id,
             fc.task_id,
             fc.checkin_type,
-            fc.checkin_message,
-            fc.patient_response,
+            fc.message,
+            fc.response AS patient_response,
             fc.response_received_at,
             fc.classification,
             fc.status,

@@ -7,7 +7,7 @@ Configuration:
 - host: localhost
 - port: 5432
 - database: carepath_db
-- user: vishwa (from environment or config)
+- user: subitsha (from environment or config)
 - password: from environment variable (never hardcoded)
 
 Usage:
@@ -31,7 +31,7 @@ DB_CONFIG = {
     "host": os.getenv("DB_HOST", "localhost"),
     "port": int(os.getenv("DB_PORT", 5432)),
     "database": os.getenv("DB_NAME", "carepath_db"),
-    "user": os.getenv("DB_USER", "vishwa"),  # Changed default from subitsha to vishwa
+    "user": os.getenv("DB_USER", "subitsha"),
     "password": os.getenv("DB_PASSWORD", ""),  # Will fail if not set and required
 }
 

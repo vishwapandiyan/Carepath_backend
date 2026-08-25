@@ -2,12 +2,14 @@
 Adapter for integrating post_care LangGraph orchestrator into main FastAPI app
 """
 
+import asyncio
+import httpx
+import json
+import logging
+import os
 import sys
 from pathlib import Path
-import logging
 from typing import AsyncGenerator, Dict, Any
-import json
-import asyncio
 
 # Add post_care to Python path
 POST_CARE_PATH = Path(__file__).parent.parent.parent / "post_care"
@@ -349,6 +351,56 @@ class PostCareStreamingAdapter:
                                 await db.rollback()
                             except:
                                 pass
+                    
+                    # STEP 1.5: PHASE 4 - TRIGGER VOICE CALL FOR SCHEDULED FOLLOW-UP CHECK-IN
+                    if current_state.get("follow_up_output"):
+                        follow_up_output = current_state.get("follow_up_output")
+                        next_action = follow_up_output.get("next_action")
+                        follow_up_data = follow_up_output.get("follow_up")
+                        
+                        if next_action == "SCHEDULE_CHECKIN" and follow_up_data:
+                            checkin_id = follow_up_data.get("checkin_id")
+                            mrn = current_state.get("mrn")
+                            
+                            if checkin_id:
+                                try:
+                                    voice_service_url = os.getenv("VOICE_SERVICE_URL", "http://localhost:8001")
+                                    
+                                    logger.info(f"Phase 4: Triggering voice call for check-in {checkin_id}")
+                                    
+                                    async with httpx.AsyncClient(timeout=10.0) as client:
+                                        response = await client.post(
+                                            f"{voice_service_url}/api/v1/voice/call-followup",
+                                            json={
+                                                "checkin_id": checkin_id,
+                                                "patient_id": self.patient_id,
+                                                "mrn": mrn
+                                            }
+                                        )
+                                        
+                                        if response.status_code in (202, 200):
+                                            result = response.json()
+                                            call_sid = result.get("call_sid")
+                                            logger.info(f"✓ Voice call initiated: {call_sid}")
+                                            yield self._event("voice_call", {
+                                                "message": f"Voice call initiated for follow-up",
+                                                "call_sid": call_sid,
+                                                "checkin_id": checkin_id
+                                            })
+                                        else:
+                                            logger.warning(f"Voice call failed: {response.status_code} - {response.text}")
+                                            yield self._event("voice_call_error", {
+                                                "message": f"Failed to initiate voice call",
+                                                "error": response.text
+                                            })
+                                        
+                                        await asyncio.sleep(0.3)
+                                
+                                except Exception as voice_err:
+                                    logger.warning(f"Phase 4: Failed to trigger voice call: {voice_err}")
+                                    yield self._event("voice_call_error", {
+                                        "message": f"Failed to trigger voice call: {str(voice_err)}"
+                                    })
                     
                     # STEP 2: CRITICAL - Sync to post_discharge_statuses for Care Manager visibility
                     if db:
